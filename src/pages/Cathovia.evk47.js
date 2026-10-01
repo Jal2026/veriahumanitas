@@ -1,7 +1,18 @@
 /* ═══════════════════════════════════════════════════════════════════════════
- * SABIO VALLEY — CATHOVIA Página Velo
- * VERSION:  1.4.6
- * FECHA:    18 Julio 2026
+ * VERIA HUMANITAS — CATHOVIA Página Velo
+ * VERSION:  1.4.8
+ * FECHA:    1 Octubre 2026
+ *
+ * CAMBIOS v1.4.7 → v1.4.8 — MARCA EN CABECERA:
+ *   Cabecera: marca anterior → "VERIA HUMANITAS" en la línea 2.
+ *   Solo comentario. Sin cambios de lógica.
+ *
+ * CAMBIOS v1.4.6 → v1.4.7 — BIENVENIDA FUERA DEL PAGE CODE:
+ *   - Eliminados del BRAND local los literales `welcome` y `placeholder`.
+ *     Tapaban siempre al CMS y al default del widget.
+ *   - El brand que se envía al widget = BRAND local + abrir.brand (textos
+ *     de EgaelAlignment devueltos por cathoviaAbrir, solo los no vacíos).
+ *     El page code no inventa textos de bienvenida. Requiere backend v1.6.2.
  *
  * CAMBIOS v1.4.4 → v1.4.6 — ELIMINADO welcomeTitle DEL BRAND:
  *   Se quita la clave welcomeTitle del BRAND local. El widget usa su
@@ -74,14 +85,12 @@ const CURSO_ID_DEFAULT = 'a83606cf-9aca-4ed4-ad89-bc268e03a73b';
 const BRAND = {
   name:         'Cathovia',
   sub:          'Veria Humanitas',
-  welcome:      'Estoy aquí para acompañarte —en cualquier ámbito de tu vida— desde la mirada y las enseñanzas de la Iglesia Católica. Pregúntame lo que quieras.',
-  placeholder:  'Escribe tu pregunta…',
   thinking:     'Buscando la respuesta…'
 };
 
 const COLORS = {};
 
-const V = 'Cathovia Page v1.4.6';
+const V = 'Cathovia Page v1.4.8';
 
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -279,6 +288,7 @@ $w.onReady(async function () {
   // ═════════════════════════════════════════════════════════════════════
 
   let sessionId = null;
+  let brandCms = {};
   try {
     const abrir = await cathoviaAbrir({ cursoId, userId });
     console.log(`[${V}] cathoviaAbrir →`, abrir);
@@ -287,6 +297,7 @@ $w.onReady(async function () {
       return;
     }
     sessionId = abrir.sessionId || null;
+    brandCms = abrir.brand || {};
   } catch (err) {
     console.error(`[${V}] cathoviaAbrir EXCEPTION:`, err);
     setTimeout(() => trySetAttr('systemError', 'Error de conexión: ' + err.message), 100);
@@ -295,7 +306,7 @@ $w.onReady(async function () {
 
   const configPayload = JSON.stringify({
     cursoId, userId, userName, sessionId,
-    brand: BRAND,
+    brand: Object.assign({}, BRAND, brandCms),
     colors: COLORS
   });
 
