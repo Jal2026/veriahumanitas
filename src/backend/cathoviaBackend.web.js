@@ -1,8 +1,22 @@
 /* ═══════════════════════════════════════════════════════════════════════════
- * SABIO VALLEY — CATHOVIA Backend (Wix Velo)
+ * VERIA HUMANITAS — CATHOVIA Backend (Wix Velo)
  * Archivo:  cathoviaBackend.web.js
- * VERSION:  1.6.1
- * FECHA:    15 Julio 2026
+ * VERSION:  1.6.3
+ * FECHA:    1 Octubre 2026
+ *
+ * CAMBIOS v1.6.2 → v1.6.3 — MARCA EN CABECERA:
+ *   Cabecera: marca anterior → "VERIA HUMANITAS" en la línea 2.
+ *   Solo comentario. Sin cambios de lógica.
+ *
+ * CAMBIOS v1.6.1 → v1.6.2 — TEXTOS DE BIENVENIDA DESDE EL CMS:
+ *   cathoviaAbrir devuelve `brand` con los textos de pantalla del alignment
+ *   publicado (EgaelAlignment), SOLO las celdas no vacías (patrón CENTRI):
+ *     welcomeTitle → brand.welcomeTitle
+ *     welcomeText  → brand.welcome      (ojo: cambia de nombre al viajar)
+ *     placeholder  → brand.placeholder
+ *   Celda vacía o solo espacios → no viaja → el widget usa su default.
+ *   Sin alignment publicado → brand = {}.
+ *   Requiere los 3 campos (Texto) creados en EgaelAlignment.
  *
  * CAMBIOS v1.5.3 → v1.6.0 — RECORTE DE LATENCIA (medido, no estimado):
  *
@@ -143,7 +157,7 @@ const MAX_TOKENS     = 700;
 const HISTORY_LIMIT  = 10;
 const MAX_DOC_CHARS  = 8000;
 
-const V = 'CATHOVIA v1.6.1';
+const V = 'CATHOVIA v1.6.3';
 
 // ── Config RAG (Fase I — palabras clave + filtro por categoría) ──
 const KNOWLEDGE_COLLECTION  = 'CathoviaKnowledge';
@@ -211,6 +225,16 @@ export const cathoviaAbrir = webMethod(
       const config = await _getAlignmentConfig(cursoId);
       console.log(`[${V}] cathoviaAbrir: alignment=${config ? 'v' + config.version : 'NO PUBLICADO'}`);
 
+      // v1.6.2: textos de pantalla desde el alignment publicado.
+      // Solo viajan las celdas con contenido; las vacías no pisan el default.
+      const brand = {};
+      if (config) {
+        if (config.welcomeTitle && String(config.welcomeTitle).trim()) brand.welcomeTitle = String(config.welcomeTitle).trim();
+        if (config.welcomeText  && String(config.welcomeText).trim())  brand.welcome      = String(config.welcomeText).trim();
+        if (config.placeholder  && String(config.placeholder).trim())  brand.placeholder  = String(config.placeholder).trim();
+      }
+      console.log(`[${V}] cathoviaAbrir brand CMS=[${Object.keys(brand).join(',')}]`);
+
       // v1.5.3: NO se carga la última sesión del usuario. Cada visita arranca
       // en welcome. El histórico está en la sidebar para reabrir a demanda.
       console.log(`[${V}] cathoviaAbrir OUT sessionId=null (welcome)`);
@@ -227,6 +251,7 @@ export const cathoviaAbrir = webMethod(
           tono: config.tono || 'pedagógico',
           idiomaSalida: config.idiomaSalida || 'es'
         } : null,
+        brand,
         sessionId: null
       };
     } catch (err) {
