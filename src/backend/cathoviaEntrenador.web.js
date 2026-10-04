@@ -1,8 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Entrenador (backend)
  * Archivo:  backend/cathoviaEntrenador.web.js
- * VERSION:  1.0.0
+ * VERSION:  1.0.1
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.0 → v1.0.1 — ACCESO POR ROLES DE WIX (como el Gestor del corpus):
+ *   Fuera la comprobación contra la colección CathoviaAdmins, que no se usa en
+ *   este proyecto (fallaba con "No se pudo verificar el acceso").
+ *   _exigirAdmin() ahora exige sesión de miembro y, si ROL_AUTORIZADO tiene
+ *   valor, que el miembro tenga ese rol (currentMember.getRoles()).
+ *   Con ROL_AUTORIZADO vacío el comportamiento es el del Gestor: el acceso lo
+ *   deciden los roles de miembro de Wix en los permisos de la página.
+ *   Ningún método cambia de firma ni de respuesta.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * PROCEDENCIA
@@ -23,14 +32,13 @@
  * ───────────────────────────────────────────────────────────────────────────
  * ⚠️ SEGURIDAD
  * ───────────────────────────────────────────────────────────────────────────
- * Todos los métodos pasan por _exigirAdmin(). Los permisos de página no
- * protegen un webMethod.
+ * Acceso a la página: roles de miembro de Wix (configurado en el editor).
+ * Todos los métodos pasan por _exigirAdmin(): exigen sesión de miembro y, si
+ * ROL_AUTORIZADO tiene valor, ese rol. Los permisos de página no protegen un
+ * webMethod: mientras ROL_AUTORIZADO esté vacío, cualquier miembro con sesión
+ * podría invocar los métodos (mismo riesgo abierto que el Gestor del corpus).
  *
- * ⚠️ REQUIERE LA COLECCIÓN CathoviaAdmins, con los ID de campo
- *    `email` (texto), `memberId` (texto) y `activo` (booleano).
- *    Basta con rellenar `email` con el correo de acceso al sitio.
- *
- * ⚠️ FALLA CERRADO: si la colección no existe o está vacía, NADIE entra.
+ * ⚠️ FALLA CERRADO: sin sesión, o con ROL_AUTORIZADO y sin ese rol, NADIE entra.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * QUÉ CAMBIA RESPECTO A centriEntrenador v1.0.0
@@ -66,17 +74,20 @@ import wixData from 'wix-data';
 import { getSecret } from 'wix-secrets-backend';
 import { currentMember } from 'wix-members-backend';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const TAG = `[CathoviaEntrenador][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
 const C_ALIGNMENT = 'EgaelAlignment';
 const C_RESOURCES = 'EgaelResources';
-const C_ADMINS    = 'CathoviaAdmins';
 
 // ⚠️ ESPEJO de CURSO_ID_DEFAULT en el page code de la consola (Cathovia.evk47.js).
 // Si allí cambia, aquí también.
 const CURSO_ID = 'a83606cf-9aca-4ed4-ad89-bc268e03a73b';
+
+// Rol de miembro de Wix exigido en backend (nombre o _id del rol).
+// Vacío = solo sesión iniciada; el acceso lo deciden los permisos de la página.
+const ROL_AUTORIZADO = '';
 
 const SECRET_API = 'EGAEL_API_KEY';
 const MODEL = 'claude-sonnet-4-6';
@@ -97,75 +108,40 @@ const CAMPOS_SISTEMA = ['_id', '_createdDate', '_updatedDate', '_owner'];
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Comprueba que quien llama está autorizado y activo en CathoviaAdmins.
- * Autoriza por email de acceso o por memberId.
+ * Comprueba que quien llama tiene sesión de miembro y, si ROL_AUTORIZADO
+ * tiene valor, ese rol de Wix.
  *
- * ⚠️ FALLA CERRADO. Sin sesión, sin colección, sin fila o con error de
- * lectura → NO autorizado.
+ * ⚠️ FALLA CERRADO. Sin sesión, o sin el rol exigido → NO autorizado.
  */
 async function _exigirAdmin() {
-  let memberId = '';
-  let email = '';
-
+  let member = null;
   try {
-    // ⚠️ getMember() sin opciones no trae loginEmail. Hay que pedir FULL.
-    let member = null;
-    try {
-      member = await currentMember.getMember({ fieldsets: ['FULL'] });
-    } catch (eFull) {
-      console.warn(`${TAG} fieldset FULL no disponible, se usa el reducido:`, eFull.message);
-      member = await currentMember.getMember();
-    }
-
-    memberId = (member && member._id) || '';
-
-    let bruto = (member && member.loginEmail) || '';
-    if (!bruto && member && member.contactDetails) {
-      const cd = member.contactDetails;
-      if (Array.isArray(cd.emails) && cd.emails.length > 0) {
-        bruto = typeof cd.emails[0] === 'string' ? cd.emails[0] : (cd.emails[0].email || '');
-      }
-    }
-    email = String(bruto || '').trim().toLowerCase();
-
+    member = await currentMember.getMember();
   } catch (e) {
     console.warn(`${TAG} sin sesión de miembro:`, e.message);
     return { ok: false, error: 'Necesitas iniciar sesión.' };
   }
 
-  if (!memberId && !email) {
+  const memberId = (member && member._id) || '';
+  if (!memberId) {
     return { ok: false, error: 'Necesitas iniciar sesión.' };
   }
 
-  try {
-    // Comparación en memoria: el CMS puede guardar el correo con mayúsculas o
-    // espacios y un .eq() literal no casaría.
-    const res = await wixData.query(C_ADMINS)
-      .eq('activo', true)
-      .limit(200)
-      .find(AUTH);
-
-    const filas = res.items || [];
-
-    const autorizado = filas.some(f => {
-      const fEmail = String(f.email || '').trim().toLowerCase();
-      const fId    = String(f.memberId || '').trim();
-      if (email && fEmail && fEmail === email) return true;
-      if (memberId && fId && fId === memberId) return true;
-      return false;
-    });
-
-    if (!autorizado) {
-      console.warn(`${TAG} acceso DENEGADO al entrenador: email=${email || '—'} memberId=${memberId || '—'} (${filas.length} filas activas en ${C_ADMINS})`);
-      return { ok: false, error: 'No tienes acceso al entrenador de Cathovia.' };
+  if (ROL_AUTORIZADO) {
+    try {
+      const roles = (await currentMember.getRoles()) || [];
+      const tiene = roles.some(r => r && (r._id === ROL_AUTORIZADO || r.title === ROL_AUTORIZADO));
+      if (!tiene) {
+        console.warn(`${TAG} acceso DENEGADO al entrenador: memberId=${memberId} sin el rol "${ROL_AUTORIZADO}"`);
+        return { ok: false, error: 'No tienes acceso al entrenador de Cathovia.' };
+      }
+    } catch (e) {
+      console.error(`${TAG} no se pudieron leer los roles — se deniega el acceso:`, e.message);
+      return { ok: false, error: 'No se pudo verificar el rol de acceso.' };
     }
-
-    return { ok: true, memberId, email };
-
-  } catch (e) {
-    console.error(`${TAG} no se pudo comprobar ${C_ADMINS} — se deniega el acceso:`, e.message);
-    return { ok: false, error: 'No se pudo verificar el acceso.' };
   }
+
+  return { ok: true, memberId };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -764,7 +740,7 @@ export const eliminarDocumento = webMethod(
  *   toggleDocumento({ documentoId, activo })
  *   eliminarDocumento({ documentoId })
  *
- * TODOS pasan por _exigirAdmin(). Sin fila activa en CathoviaAdmins, ninguno
- * responde.
+ * TODOS pasan por _exigirAdmin(). Sin sesión de miembro (o sin el rol de
+ * ROL_AUTORIZADO, si tiene valor), ninguno responde.
  * ═══════════════════════════════════════════════════════════════════════════
  */
