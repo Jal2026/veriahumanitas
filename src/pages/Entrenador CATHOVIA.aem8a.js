@@ -1,8 +1,11 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Page Code del Entrenador
  * Página:   Entrenador Cathovia
- * VERSION:  1.0.0
+ * VERSION:  1.0.1
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.0 → v1.0.1: solo comentarios de acceso. El backend v1.0.1 ya
+ * no usa CathoviaAdmins. Sin cambios de lógica.
  *
  * Port del page code del Entrenador CENTRI v1.0.0.
  *
@@ -18,8 +21,9 @@
  * ───────────────────────────────────────────────────────────────────────────
  * ⚠️ ACCESO
  * ───────────────────────────────────────────────────────────────────────────
- * El permiso de página evita que la gente VEA la pantalla; _exigirAdmin() en
- * el backend (colección CathoviaAdmins) evita que la USEN. Hacen falta los dos.
+ * El acceso a la página lo deciden los roles de miembro de Wix. En el backend,
+ * _exigirAdmin() exige sesión de miembro y, si ROL_AUTORIZADO tiene valor en
+ * cathoviaEntrenador.web.js, ese rol.
  *
  * ───────────────────────────────────────────────────────────────────────────
  * CAMBIOS RESPECTO A CENTRI v1.0.0
@@ -48,7 +52,7 @@ import {
 } from 'backend/cathoviaEntrenador.web';
 
 const EL_ID = '#htmlEntrenadorCathovia';   // ← debe coincidir con el Element ID en el editor
-const TAG = '[PageCode_Entrenador_Cathovia][1.0.0]';
+const TAG = '[PageCode_Entrenador_Cathovia][1.0.1]';
 
 $w.onReady(function () {
   console.log(`${TAG} onReady`);
