@@ -1,8 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Analizador (backend)
  * Archivo:  backend/cathoviaAnalytics.web.js
- * VERSION:  1.2.0
+ * VERSION:  1.2.1
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.2.0 → v1.2.1 — BUG procesarClimaLote:
+ *   interpretarLote devuelve un contador llamado `ok` (conversaciones bien
+ *   interpretadas). Al hacer { ok: true, ...resultado } ese contador pisaba el
+ *   ok de la respuesta: un lote sin ninguna interpretación correcta (p. ej.
+ *   tres sesiones sin mensajes) llegaba como ok: 0 y el panel lo trataba como
+ *   error. Tras 4 lotes así se detenía con "detenida tras varios errores: 0".
+ *   Ahora el contador viaja como `interpretadas` y `ok` es siempre el de la
+ *   respuesta. cathoviaClima no cambia.
  *
  * CAMBIOS v1.1.0 → v1.2.0 — PROCESAR EL HISTÓRICO DESDE EL PANEL:
  *   1. Nuevo procesarClimaLote({ max }) sobre interpretarLote de
@@ -63,7 +72,7 @@ import {
   interpretarLote
 } from 'backend/cathoviaClima';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const TAG = `[CathoviaAnalyticsWeb][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -502,7 +511,10 @@ export const procesarClimaLote = webMethod(
   Permissions.SiteMember,
   async ({ max }) => {
     try {
-      return { ok: true, ...(await interpretarLote(max)) };
+      const r = await interpretarLote(max);
+      // r.ok es un contador de interpretaciones correctas, no el estado de la
+      // respuesta: se renombra para que no pise ok.
+      return { ...r, interpretadas: r.ok, ok: true };
     } catch (e) {
       console.error(`${TAG} procesarClimaLote error:`, e.message);
       return { ok: false, error: e.message };
