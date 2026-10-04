@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>VERIA HUMANITAS · Gestor del corpus de Cathovia</title>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     VERIA HUMANITAS — Gestor del corpus de Cathovia · v1.0.10 · 4 Octubre 2026
+
+     CAMBIOS v1.0.9 → v1.0.10 — INTERRUPTOR ACTIVO / INACTIVO EN EL LISTADO:
+       - La columna Estado del listado es un interruptor: cambia el estado
+         al momento (activarDocumentoCorpus), sin abrir el documento.
+       - En móvil la columna Estado vuelve a verse (v1.0.8 la ocultaba);
+         solo se oculta Caracteres.
+       - El interruptor del listado y el botón del editor se mantienen
+         sincronizados.
+       Sin cambios en backend (v1.0.5) ni page code (v1.0.4).
+
+     CAMBIOS v1.0.8 → v1.0.9 — USUARIO Y AUTORÍA:
+       - Cabecera: "Conectado: Nombre (email)" del miembro con sesión.
+       - Editor: quién dio de alta el documento y quién lo modificó por
+         última vez, con fecha. Los migrados aparecen como "Migración".
+       - Listado: al pasar el ratón por el título, última modificación.
+       REQUIERE backend v1.0.5 (page code sin cambios, v1.0.4).
+
+     CAMBIOS v1.0.7 → v1.0.8 — MÓVIL: NADA SE SALE DE ANCHO:
+       Causa: la rejilla .layout usaba 1fr, que en CSS Grid no deja encoger
+       la columna por debajo del ancho mínimo de su contenido (la tabla). La
+       tarjeta crecía hasta el ancho de la tabla y la página se ensanchaba.
+       - .layout → minmax(0,1fr) y min-width:0 en sus hijos: ahora la tabla
+         se desplaza dentro de su caja.
+       - Desplegables con max-width:100% y min-width:0 en los hijos flex
+         (un <select> mide lo que su opción más larga).
+       - Menos de 640 px: filtros a ancho completo; en el listado se ocultan
+         Caracteres y Estado; en la ingesta, Caracteres.
+       Sin cambios de lógica: solo CSS y una clase en la tabla del listado.
+
+     CAMBIOS v1.0.6 → v1.0.7 — CATEGORÍAS DESDE EL LISTADO:
+       1. La columna Categoría del listado es un desplegable: cambiarla la
+          guarda al momento (asignarCategoria), sin abrir el documento.
+       2. "✦ Proponer para los sin categoría": la IA propone para los
+          documentos sin categoría de la página visible (3 a la vez). Cada
+          propuesta queda en su fila con ✓ / ✗, y en bloque: "Aceptar todas",
+          "Aceptar solo confianza alta", "Descartar todas". Aceptar guarda
+          principal y secundaria.
+       REQUIERE backend v1.0.4 y page code v1.0.4.
+
+     CAMBIOS v1.0.5 → v1.0.6 — INGESTA POR LOTES:
+       1. Entrada: ficheros sueltos, carpeta completa (con subcarpetas, por
+          botón o arrastrando) o .zip (JSZip 3.10.1). Lo que no sea .docx,
+          .pdf, .txt o .md se ignora y se avisa.
+       2. Propuestas en tabla: la IA propone sin interrumpir y la propuesta
+          queda pendiente en su fila (✓ / ✗). En bloque: "Aceptar todas",
+          "Aceptar solo confianza alta", "Descartar todas". Nada se aplica
+          sin aprobación. La ventana Aceptar / Descartar queda solo en el editor.
+       3. Vista compacta: una fila por documento; el texto se despliega bajo
+          demanda. Las filas se repintan de una en una (no se pierde el foco).
+       4. Progreso y resumen: barra al procesar y al guardar; 3 documentos en
+          paralelo; un error no para el lote; resumen final con la lista de
+          fallos y su motivo. Opción "No guardar los duplicados" (incluye
+          títulos repetidos dentro del mismo lote).
+       Sin cambios en backend ni page code (siguen en v1.0.3).
+
+     CAMBIOS v1.0.4 → v1.0.5 — VENTANA DE PROPUESTA JUNTO AL DOCUMENTO:
+       Con position:fixed la ventana se centraba en el alto total del
+       iframe, que es mayor que la pantalla: aparecía lejos del documento.
+       Ahora se coloca justo debajo del documento al que se refiere
+       (o de las categorías en el editor) y se desplaza a la vista.
+
+     CAMBIOS v1.0.3 → v1.0.4 — LA PROPUESTA SE CONFIRMA:
+       La propuesta de categoría ya no rellena los desplegables sola. Se
+       muestra en una ventana con Aceptar / Descartar. Si hay varias
+       pendientes (ingesta por lotes), aparecen de una en una.
+       Sin cambios en backend ni page code (siguen en v1.0.3).
+
+     CAMBIOS v1.0.2 → v1.0.3 — PROPUESTA DE CATEGORÍA CON IA:
+       Botón "Proponer categoría" en el editor y en cada documento de la
+       lista de ingesta. En la ingesta, opción para proponerla sola al
+       extraer (solo si el documento no tiene ya categoría).
+
+     CAMBIOS v1.0.1 → v1.0.2 — ARRANQUE ROBUSTO:
+       El 'ready' inicial podía enviarse antes de que el page code
+       registrase onMessage y perderse: la pantalla se quedaba en
+       "Cargando…". Ahora se reintenta cada 4 s (hasta 5 veces) y también
+       se lanza al recibir 'pageReady' del page code. Si falla, el motivo
+       queda escrito en la tabla en vez de en un aviso de 5 segundos.
+
+     CAMBIOS v1.0.0 → v1.0.1: el acceso lo controlan los roles de miembro
+     de Wix. Fuera las referencias a CathoviaAdmins.
+
+     REQUIERE: cathoviaCorpus.web.js v1.0.5 + GestorCorpus_page.js v1.0.4
+               cathoviaBackend.web.js v1.6.4 (para que "inactivo" tenga efecto)
+     ELEMENTO:  #htmlGestorCorpus (HtmlComponent)
+
+     ⚠️ ES UN IFRAME. Habla por postMessage. Cada petición lleva un reqId y
+        su respuesta vuelve con el mismo reqId.
+
+     ⚠️ EL ACCESO NO LO DECIDE ESTE ARCHIVO: roles de miembro de Wix.
+
+     EXTRACCIÓN DE TEXTO (en el navegador, el fichero no se sube):
+       .docx → mammoth 1.6.0 · .pdf → pdf.js 3.11.174 · .txt / .md → directo
+       .zip  → JSZip 3.10.1 (se descomprime en el navegador)
+       .doc (Word antiguo) NO: hay que guardarlo antes como .docx.
+       PDF escaneado (imagen) NO: no tiene texto que extraer.
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+:root{
+  --bg:#EFE8D5;--panel:#FBF7EC;--panel2:#F6F0E1;--panel3:#ECE4D0;
+  --line:#E2D9C3;--line2:#D3C8AE;
+  --fg:#1C2430;--fg2:#3B4552;--muted:#6E7480;--muted2:#9EA2A8;
+  --accent:#1E3A5F;--accent2:#152B47;--accent-dim:rgba(30,58,95,.07);
+  --green:#2E7D4F;--green-dim:rgba(46,125,79,.1);
+  --amber:#A86A12;--amber-dim:rgba(168,106,18,.12);
+  --red:#B03A2E;--red-dim:rgba(176,58,46,.1);
+  --font:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --font-title:'Instrument Serif',Georgia,'Times New Roman',serif;
+  --r:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:14px;line-height:1.45}
+button,input,select,textarea{font-family:var(--font);font-size:13px;color:var(--fg)}
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+
+/* cabecera */
+.hd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.hd-title{font-family:var(--font-title);font-size:24px;color:var(--accent);letter-spacing:.5px}
+.hd-sub{font-size:13px;color:var(--muted)}
+.hd-user{font-size:12px;color:var(--fg2);width:100%;margin-top:-6px}
+.hd-user b{color:var(--accent)}
+.stats{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:6px 10px;font-size:12px;color:var(--fg2)}
+.stat b{color:var(--accent);font-size:14px}
+
+/* pestañas */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line2);margin-bottom:14px}
+.tab{padding:9px 16px;border:1px solid transparent;border-bottom:none;border-radius:var(--r) var(--r) 0 0;background:none;cursor:pointer;font-weight:600;color:var(--muted)}
+.tab.active{background:var(--panel);border-color:var(--line2);color:var(--accent);margin-bottom:-1px}
+.view{display:none}.view.active{display:block}
+
+/* tarjetas */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:14px}
+.card h3{font-size:14px;font-weight:700;color:var(--accent);margin-bottom:10px}
+.hint{font-size:12px;color:var(--muted);margin-bottom:10px}
+
+/* controles */
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grow{flex:1 1 180px;min-width:0}
+.row > *{min-width:0}
+select{max-width:100%;text-overflow:ellipsis}
+input[type=text],select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line2);border-radius:var(--r);background:#fff;outline:none}
+input[type=text]:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;line-height:1.5}
+label.lb{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:10px 0 4px}
+.btn{padding:8px 14px;border:1px solid var(--line2);border-radius:var(--r);background:var(--panel2);cursor:pointer;font-weight:600;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent2)}
+.btn.danger{color:var(--red)}
+.btn.small{padding:5px 10px;font-size:12px}
+
+/* listado */
+.layout{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.layout > *{min-width:0}
+@media(min-width:1050px){.layout.editing{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)}}
+.tbl-wrap{overflow-x:auto;max-width:100%}
+
+/* móvil */
+@media(max-width:640px){
+  .wrap{padding:10px}
+  .hd{gap:8px}
+  .hd-title{font-size:20px}
+  .stats{margin-left:0;width:100%}
+  .stat{padding:4px 8px;font-size:11px}
+  .tab{padding:8px 10px;font-size:13px}
+  .card{padding:10px}
+  .row > select,.row > input,.row > .grow,.row > .btn{flex:1 1 100%;max-width:100% !important}
+  table.lst th:nth-child(3),table.lst td:nth-child(3){display:none}
+  .sw .lbl{display:none}
+  .t-cat select{width:100%;max-width:100%}
+  .qtbl th:nth-child(4),.qtbl td:nth-child(4){display:none}
+  .qtbl th{min-width:0 !important}
+  .bulk span{width:100%;margin-right:0}
+  .ed-actions .btn{flex:1 1 auto}
+  #btnEliminar{margin-left:0 !important}
+  #qResumen{margin:0 !important;width:100%}
+  .dz-btns .btn{flex:1 1 auto}
+}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;padding:6px 8px;border-bottom:1px solid var(--line2)}
+td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+tr.doc{cursor:pointer}
+tr.doc:hover td{background:var(--accent-dim)}
+tr.doc.sel td{background:var(--panel3)}
+tr.doc.off td{color:var(--muted2)}
+.t-tit{font-weight:600}
+.t-cat{font-size:12px;color:var(--fg2)}
+.t-num{font-size:12px;color:var(--muted);white-space:nowrap;text-align:right}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;background:var(--panel3);color:var(--fg2);white-space:nowrap}
+.pill.off{background:var(--red-dim);color:var(--red)}
+.pill.nocat{background:var(--amber-dim);color:var(--amber)}
+.pill.new{background:var(--green-dim);color:var(--green)}
+.pager{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--muted)}
+.empty{padding:20px;text-align:center;color:var(--muted)}
+
+/* editor */
+.ed-meta{font-size:12px;color:var(--muted);margin-top:4px}
+.ed-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+#edContent{min-height:380px;font-size:13px}
+.count{font-size:12px;color:var(--muted);text-align:right;margin-top:4px}
+.count.over{color:var(--red);font-weight:600}
+.newcat{display:none;margin-top:8px;gap:8px}
+.newcat.open{display:flex}
+
+/* ingesta */
+.dropzone{border:2px dashed var(--line2);border-radius:var(--r);padding:22px;text-align:center;background:var(--panel2);color:var(--fg2)}
+.dropzone.dragging{border-color:var(--accent);background:var(--accent-dim)}
+.dropzone b{color:var(--accent)}
+.dz-btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+.opts{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px}
+.opts label{display:flex;gap:6px;align-items:center;font-size:13px}
+.prog{display:none;margin-top:14px}
+.prog.on{display:block}
+.prog-txt{font-size:12px;color:var(--fg2);margin-bottom:4px;display:flex;justify-content:space-between}
+.prog-bar{height:8px;background:var(--panel3);border-radius:4px;overflow:hidden}
+.prog-fill{height:100%;width:0;background:var(--accent);transition:width .2s}
+.bulk{display:none;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px;padding:10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--accent-dim)}
+.bulk.on{display:flex}
+.bulk span{font-size:13px;font-weight:600;color:var(--accent);margin-right:auto}
+.qtbl td{padding:6px 6px;font-size:12px}
+.qtbl input[type=text],.qtbl select{padding:5px 7px;font-size:12px}
+.qtbl .q-name{font-size:11px;color:var(--muted);word-break:break-all;margin-top:2px}
+.q-st{font-weight:600;white-space:nowrap}
+.q-st.ok{color:var(--green)}.q-st.warn{color:var(--amber)}.q-st.err{color:var(--red)}.q-st.busy{color:var(--muted)}
+.q-prop{font-size:12px;line-height:1.35}
+.q-prop .conf{font-size:10px;text-transform:uppercase;letter-spacing:.3px;padding:0 5px;border-radius:8px;background:var(--panel3);color:var(--fg2);margin-left:4px}
+.q-prop .conf.alta{background:var(--green-dim);color:var(--green)}
+.q-prop .conf.baja{background:var(--amber-dim);color:var(--amber)}
+.q-prop .acc{display:inline-flex;gap:4px;margin-top:4px}
+.q-prop .acc button{padding:2px 8px;font-size:12px}
+.q-prop.done{color:var(--muted)}
+.q-prop.err{color:var(--red)}
+.q-acts{white-space:nowrap}
+.q-acts button{padding:3px 8px;font-size:11px}
+tr.q-detail td{background:var(--panel2)}
+tr.q-detail textarea{min-height:200px;font-size:12px}
+.resumen{display:none;margin-top:14px;padding:12px;border-radius:var(--r);background:var(--panel2);border:1px solid var(--line2);font-size:13px}
+.resumen.on{display:block}
+.resumen ul{margin:6px 0 0 18px;font-size:12px;color:var(--fg2)}
+.sug{font-size:12px;color:var(--accent);margin-top:6px}
+.sug.err{color:var(--red)}
+
+/* categoría en el listado */
+.t-cat select{padding:4px 6px;font-size:12px;max-width:280px}
+.t-cat select.nocat{border-color:var(--amber);background:#fffaf0}
+.l-st{font-size:11px;margin-top:3px;min-height:0}
+.l-st.ok{color:var(--green)}.l-st.err{color:var(--red)}.l-st.busy{color:var(--muted)}
+.ltools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+
+/* interruptor activo / inactivo */
+.sw{position:relative;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--fg2);white-space:nowrap}
+.sw input{position:absolute;opacity:0;width:0;height:0}
+.sw .trk{width:34px;height:18px;border-radius:9px;background:var(--line2);position:relative;transition:background .15s;flex:none}
+.sw .trk::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s}
+.sw input:checked + .trk{background:var(--green)}
+.sw input:checked + .trk::after{left:18px}
+.sw input:disabled + .trk{opacity:.5}
+.sw input:focus-visible + .trk{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ventana de confirmación */
+#modal{display:none;position:absolute;left:0;top:0;width:100%;background:rgba(28,36,48,.25);z-index:20}
+#modal.open{display:block}
+.md-box{position:absolute;background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);max-width:520px;width:calc(100% - 32px);padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.md-box h4{font-family:var(--font-title);font-weight:400;font-size:20px;color:var(--accent);margin-bottom:4px}
+.md-doc{font-size:12px;color:var(--muted);margin-bottom:12px}
+.md-row{display:flex;gap:8px;margin:6px 0;font-size:13px}
+.md-row span{min-width:92px;color:var(--muted)}
+.md-row b{color:var(--fg)}
+.md-mot{font-size:12px;color:var(--fg2);margin-top:8px;font-style:italic}
+.md-act{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+
+/* aviso de acceso y toast */
+#gate{display:none;padding:30px;text-align:center;color:var(--red);background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--fg);color:#fff;padding:9px 16px;border-radius:var(--r);font-size:13px;display:none;z-index:10;max-width:90%}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hd">
+    <span class="hd-title">CATHOVIA</span>
+    <span class="hd-sub">Gestor del corpus documental</span>
+    <div class="stats">
+      <span class="stat">Documentos <b id="stTotal">—</b></span>
+      <span class="stat">Sin categoría <b id="stSinCat">—</b></span>
+      <span class="stat">Inactivos <b id="stInact">—</b></span>
+      <span class="stat">Categorías <b id="stCats">—</b></span>
+    </div>
+  </div>
+
+  <div class="hd-user" id="hdUser"></div>
+
+  <div id="gate"></div>
+
+  <div id="main">
+    <div class="tabs">
+      <button class="tab active" data-view="vExplorar">Explorar y editar</button>
+      <button class="tab" data-view="vIngestar">Añadir documentos</button>
+    </div>
+
+    <!-- ═══════════ EXPLORAR Y EDITAR ═══════════ -->
+    <div class="view active" id="vExplorar">
+      <div class="layout" id="layout">
+
+        <div class="card">
+          <div class="row">
+            <input type="text" id="fTexto" class="grow" placeholder="Buscar por título…">
+            <select id="fCategoria" style="max-width:260px"></select>
+            <select id="fEstado" style="max-width:150px">
+              <option value="todos">Todos</option>
+              <option value="inactivos">Solo inactivos</option>
+            </select>
+            <button class="btn primary" id="btnBuscar">Buscar</button>
+          </div>
+          <div class="ltools">
+            <button class="btn small" id="btnProponerLista">✦ Proponer para los sin categoría de esta página</button>
+            <span class="hint" style="margin:0">Cambia la categoría en el desplegable de cada fila: se guarda al momento.</span>
+          </div>
+          <div class="bulk" id="lbulk">
+            <span id="lbulkTxt"></span>
+            <button class="btn small primary" id="lbtnTodas">Aceptar todas</button>
+            <button class="btn small" id="lbtnAlta">Aceptar solo confianza alta</button>
+            <button class="btn small" id="lbtnNinguna">Descartar todas</button>
+          </div>
+          <div class="tbl-wrap" style="margin-top:12px">
+            <table class="lst">
+              <thead><tr><th>Título</th><th>Categoría</th><th style="text-align:right">Caracteres</th><th>Estado</th></tr></thead>
+              <tbody id="tbody"><tr><td colspan="4" class="empty">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button class="btn small" id="btnPrev">← Anterior</button>
+            <span id="pgInfo">—</span>
+            <button class="btn small" id="btnNext">Siguiente →</button>
+          </div>
+        </div>
+
+        <div class="card" id="editor" style="display:none">
+          <div class="row">
+            <h3 style="margin:0" id="edHead">Editar documento</h3>
+            <button class="btn small" id="btnCerrarEd" style="margin-left:auto">Cerrar</button>
+          </div>
+          <div class="ed-meta" id="edMeta"></div>
+
+          <label class="lb">Título (el que muestra Cathovia)</label>
+          <input type="text" id="edTitulo">
+          <div class="ed-meta" id="edTituloOrig"></div>
+
+          <div class="row" style="align-items:flex-end">
+            <div class="grow">
+              <label class="lb">Categoría</label>
+              <select id="edCat"></select>
+            </div>
+            <div class="grow">
+              <label class="lb">Categoría secundaria</label>
+              <select id="edCatSec"></select>
+            </div>
+            <button class="btn small" id="btnProponerEd">✦ Proponer categoría</button>
+            <button class="btn small" data-newcat="edNewCat">+ Nueva categoría</button>
+          </div>
+          <div class="sug" id="edSug"></div>
+          <div class="newcat" id="edNewCat">
+            <input type="text" class="grow" placeholder="Nombre de la nueva categoría">
+            <button class="btn small primary">Crear</button>
+          </div>
+
+          <label class="lb">Contenido</label>
+          <textarea id="edContent"></textarea>
+          <div class="count" id="edCount"></div>
+
+          <div class="ed-actions">
+            <button class="btn primary" id="btnGuardar">Guardar cambios</button>
+            <button class="btn" id="btnLimpiarEd">Limpiar texto</button>
+            <button class="btn" id="btnToggle">Desactivar</button>
+            <button class="btn danger" id="btnEliminar" style="margin-left:auto">Eliminar</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ═══════════ INGESTAR ═══════════ -->
+    <div class="view" id="vIngestar">
+      <div class="card">
+        <h3>Añadir documentos al corpus</h3>
+        <p class="hint">Ficheros sueltos, una carpeta entera (con subcarpetas) o un .zip. Se admiten .docx, .pdf, .txt y .md; el resto se ignora. El texto se extrae aquí mismo: los ficheros no se suben. Los .doc antiguos hay que guardarlos antes como .docx.</p>
+
+        <div class="row" style="align-items:flex-end">
+          <div class="grow">
+            <label class="lb">Categoría por defecto para los nuevos</label>
+            <select id="inCatDefecto"></select>
+          </div>
+          <button class="btn small" data-newcat="inNewCat">+ Nueva categoría</button>
+        </div>
+        <div class="newcat" id="inNewCat">
+          <input type="text" class="grow" placeholder="Nombre de la nueva categoría">
+          <button class="btn small primary">Crear</button>
+        </div>
+        <div class="opts">
+          <label><input type="checkbox" id="inLimpiar" checked> Limpiar texto al extraer</label>
+          <label><input type="checkbox" id="inProponer" checked> Proponer categoría con IA</label>
+          <label><input type="checkbox" id="inOmitirDup" checked> No guardar los duplicados</label>
+        </div>
+
+        <div class="dropzone" id="dropzone" style="margin-top:12px">
+          <b>Arrastra aquí ficheros, una carpeta o un .zip</b><br>
+          <span style="font-size:12px;color:var(--muted)">.docx · .pdf · .txt · .md · .zip — máx. 15 MB por documento</span>
+          <div class="dz-btns">
+            <button class="btn small" id="btnElegirFicheros">Elegir ficheros</button>
+            <button class="btn small" id="btnElegirCarpeta">Elegir carpeta</button>
+          </div>
+        </div>
+        <input type="file" id="fileInput" accept=".docx,.pdf,.txt,.md,.zip" multiple style="display:none">
+        <input type="file" id="folderInput" webkitdirectory multiple style="display:none">
+
+        <div class="prog" id="prog">
+          <div class="prog-txt"><span id="progTxt"></span><span id="progNum"></span></div>
+          <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+        </div>
+
+        <div class="bulk" id="bulk">
+          <span id="bulkTxt"></span>
+          <button class="btn small primary" id="btnAceptarTodas">Aceptar todas</button>
+          <button class="btn small" id="btnAceptarAlta">Aceptar solo confianza alta</button>
+          <button class="btn small" id="btnDescartarTodas">Descartar todas</button>
+        </div>
+
+        <div class="tbl-wrap" id="qWrap" style="display:none;margin-top:12px">
+          <table class="qtbl">
+            <thead><tr><th style="min-width:220px">Documento</th><th style="min-width:180px">Categoría</th><th style="min-width:200px">Propuesta IA</th><th style="text-align:right">Caract.</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="qBody"></tbody>
+          </table>
+        </div>
+
+        <div class="ed-actions" id="qActions" style="display:none">
+          <button class="btn primary" id="btnGuardarTodos">Guardar los listos</button>
+          <button class="btn" id="btnVaciar">Quitar los guardados</button>
+          <button class="btn danger" id="btnVaciarTodo">Vaciar la lista</button>
+          <span class="hint" id="qResumen" style="margin:0 0 0 auto;align-self:center"></span>
+        </div>
+
+        <div class="resumen" id="resumenLote"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal">
+    <div class="md-box">
+      <h4>Categoría propuesta</h4>
+      <div class="md-doc" id="mdDoc"></div>
+      <div class="md-row"><span>Principal</span><b id="mdPrin"></b></div>
+      <div class="md-row"><span>Secundaria</span><b id="mdSec"></b></div>
+      <div class="md-row"><span>Confianza</span><b id="mdConf"></b></div>
+      <div class="md-mot" id="mdMot"></div>
+      <div class="md-act">
+        <button class="btn" id="mdNo">Descartar</button>
+        <button class="btn primary" id="mdSi">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Estado
+// ═══════════════════════════════════════════════════════════════════════════
+var MAX_CHARS = 200000;            // espejo de MAX_CONTENT_CHARS del backend
+var MAX_FILE  = 15 * 1048576;
+var SIN_CAT   = '__sin__';
+
+var categorias = [];
+var resumen = { total: 0, sinCategoria: 0, inactivos: 0 };
+var filtro = { texto: '', categoria: '', estado: 'todos', pagina: 0 };
+var paginas = 1;
+var docs = [];
+var actual = null;                 // documento abierto en el editor
+var cola = [];                     // ingesta
+var seq = 0;
+var pendientes = {};
+
+var $ = function(id){ return document.getElementById(id); };
+
+function toast(msg, ms){
+  var t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(function(){ t.style.display = 'none'; }, ms || 2600);
+}
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function num(n){ return (Number(n) || 0).toLocaleString('es-ES'); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Canal con la página: petición → promesa resuelta por reqId
+// ═══════════════════════════════════════════════════════════════════════════
+function call(type, data, timeoutMs){
+  return new Promise(function(resolve){
+    var reqId = 'r' + (++seq);
+    var timer = setTimeout(function(){
+      delete pendientes[reqId];
+      resolve({ ok: false, error: 'Sin respuesta del servidor (tiempo agotado).', timeout: true });
+    }, timeoutMs || 60000);
+    pendientes[reqId] = function(p){ clearTimeout(timer); resolve(p || { ok: false, error: 'Respuesta vacía.' }); };
+    parent.postMessage(Object.assign({ type: type, reqId: reqId }, data || {}), '*');
+  });
+}
+
+window.addEventListener('message', function(ev){
+  var m = ev.data;
+  if (!m || typeof m !== 'object') return;
+  if (m.type === 'pageReady'){ arrancar(); return; }
+  if (!m.reqId) return;
+  var cb = pendientes[m.reqId];
+  if (cb){ delete pendientes[m.reqId]; cb(m.payload); }
+});
+
+function esDenegado(p){ return p && p.error && /permission|permiso|sesión|forbidden/i.test(p.error); }
+
+function bloquear(motivo){
+  $('main').style.display = 'none';
+  var g = $('gate'); g.style.display = 'block';
+  g.textContent = motivo;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Categorías
+// ═══════════════════════════════════════════════════════════════════════════
+function opcionesCategoria(sel, incluirVacia, textoVacia, valorActual){
+  var html = incluirVacia ? '<option value="">' + esc(textoVacia) + '</option>' : '';
+  var ordenadas = categorias.slice().sort(function(a,b){ return a.localeCompare(b, 'es'); });
+  // Una categoría heredada que no esté en el índice se muestra igualmente
+  if (valorActual && categorias.indexOf(valorActual) < 0){
+    html += '<option value="' + esc(valorActual) + '">' + esc(valorActual) + ' (fuera del índice)</option>';
+  }
+  for (var i = 0; i < ordenadas.length; i++){
+    html += '<option value="' + esc(ordenadas[i]) + '">' + esc(ordenadas[i]) + '</option>';
+  }
+  sel.innerHTML = html;
+  sel.value = valorActual || '';
+}
+
+function pintarCategorias(){
+  var f = $('fCategoria'), fv = f.value;
+  var html = '<option value="">Todas las categorías</option><option value="' + SIN_CAT + '">— Sin categoría —</option>';
+  var ordenadas = categorias.slice().sort(function(a,b){ return a.localeCompare(b, 'es'); });
+  for (var i = 0; i < ordenadas.length; i++) html += '<option value="' + esc(ordenadas[i]) + '">' + esc(ordenadas[i]) + '</option>';
+  f.innerHTML = html; f.value = fv;
+
+  opcionesCategoria($('inCatDefecto'), true, 'Sin categoría', $('inCatDefecto').value);
+  if (actual){
+    opcionesCategoria($('edCat'), true, 'Sin categoría', $('edCat').value || actual.category);
+    opcionesCategoria($('edCatSec'), true, 'Ninguna', $('edCatSec').value || actual.categorySecondary);
+  }
+  cola.forEach(rellenarSelects);
+  docs.forEach(rellenarCatLista);
+  $('stCats').textContent = num(categorias.length);
+}
+
+document.querySelectorAll('[data-newcat]').forEach(function(b){
+  b.addEventListener('click', function(){ $(this.dataset.newcat).classList.toggle('open'); });
+});
+['edNewCat', 'inNewCat'].forEach(function(id){
+  var box = $(id), inp = box.querySelector('input'), btn = box.querySelector('button');
+  btn.addEventListener('click', function(){
+    var n = inp.value.trim();
+    if (n.length < 3){ toast('Escribe el nombre de la categoría'); return; }
+    btn.disabled = true;
+    call('createCategory', { nombre: n }).then(function(p){
+      btn.disabled = false;
+      if (!p.ok){ toast('Error: ' + p.error, 4000); return; }
+      categorias = p.categorias;
+      if (id === 'edNewCat'){ pintarCategorias(); $('edCat').value = p.nombre; }
+      else { pintarCategorias(); $('inCatDefecto').value = p.nombre; }
+      inp.value = ''; box.classList.remove('open');
+      toast('Categoría "' + p.nombre + '" creada. Cathovia la detectará en unos 5 minutos.', 4000);
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Resumen y listado
+// ═══════════════════════════════════════════════════════════════════════════
+function pintarResumen(){
+  $('stTotal').textContent = num(resumen.total);
+  $('stSinCat').textContent = num(resumen.sinCategoria);
+  $('stInact').textContent = num(resumen.inactivos);
+}
+
+function listar(){
+  propsLista = {}; estLista = {};
+  $('tbody').innerHTML = '<tr><td colspan="4" class="empty">Cargando…</td></tr>';
+  call('list', filtro).then(function(p){
+    if (!p.ok){
+      if (esDenegado(p)) return bloquear(p.error);
+      $('tbody').innerHTML = '<tr><td colspan="4" class="empty">Error: ' + esc(p.error) + '</td></tr>';
+      return;
+    }
+    docs = p.documentos || [];
+    paginas = p.paginas || 1;
+    pintarLista(p.total);
+  });
+}
+
+function pintarLista(total){
+  if (docs.length === 0){
+    $('tbody').innerHTML = '<tr><td colspan="4" class="empty">No hay documentos con ese filtro.</td></tr>';
+  } else {
+    var html = '';
+    for (var i = 0; i < docs.length; i++){
+      var d = docs[i];
+      html += '<tr class="doc' + (d.activo ? '' : ' off') + (actual && actual.id === d.id ? ' sel' : '') + '" data-id="' + d.id + '">' +
+        '<td class="t-tit"' + (d.autorModificacion ? ' title="Última modificación: ' + esc(d.autorModificacion) + '"' : '') + '>' + esc(d.titulo || 'Sin título') + (d.origen === 'gestor' ? ' <span class="pill new">nuevo</span>' : '') + '</td>' +
+        '<td class="t-cat">' + htmlCeldaCat(d) + '</td>' +
+        '<td class="t-num">' + num(d.charLength) + '</td>' +
+        '<td>' + htmlSwitch(d) + '</td></tr>';
+    }
+    $('tbody').innerHTML = html;
+    docs.forEach(rellenarCatLista);
+  }
+  pintarLBulk();
+  $('pgInfo').textContent = num(total) + ' documentos · página ' + (filtro.pagina + 1) + ' de ' + paginas;
+  $('btnPrev').disabled = filtro.pagina <= 0;
+  $('btnNext').disabled = filtro.pagina >= paginas - 1;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Categoría desde el listado
+// ═══════════════════════════════════════════════════════════════════════════
+var propsLista = {};               // id → { estado, principal, secundaria, confianza, motivo }
+var estLista = {};                 // id → { cls, txt } (aviso bajo el desplegable)
+
+function htmlSwitch(d){
+  return '<label class="sw" title="' + (d.activo ? 'Activo: Cathovia lo usa' : 'Inactivo: Cathovia no lo usa') + '">' +
+    '<input type="checkbox" class="lsw" data-id="' + d.id + '"' + (d.activo ? ' checked' : '') + '>' +
+    '<span class="trk"></span><span class="lbl">' + (d.activo ? 'activo' : 'inactivo') + '</span></label>';
+}
+
+// Cambia activo / inactivo. Lo usan el interruptor del listado y el botón del editor.
+function cambiarActivo(id, nuevo){
+  return call('toggle', { id: id, activo: nuevo }).then(function(p){
+    var d = docPorId(id);
+    if (!p.ok){
+      toast('Error: ' + p.error, 4000);
+      if (d) refrescarFila(d);                 // devuelve el interruptor a su posición
+      return p;
+    }
+    var antes = d ? d.activo : !p.activo;
+    if (antes !== p.activo){
+      resumen.inactivos += p.activo ? -1 : 1;
+      if (resumen.inactivos < 0) resumen.inactivos = 0;
+      pintarResumen();
+    }
+    if (d){ d.activo = p.activo; refrescarFila(d); }
+    if (actual && actual.id === id){ actual.activo = p.activo; pintarToggle(); }
+    toast(p.activo ? 'Activado: vuelve a usarse en las respuestas' : 'Desactivado: Cathovia ya no lo usa');
+    return p;
+  });
+}
+
+function htmlCeldaCat(d){
+  var st = estLista[d.id];
+  return '<select class="lcat' + (d.category ? '' : ' nocat') + '" id="lc_' + d.id + '" data-id="' + d.id + '"></select>' +
+    '<div class="lprop" id="lp_' + d.id + '">' + htmlPropLista(d.id) + '</div>' +
+    '<div class="l-st ' + (st ? st.cls : '') + '" id="ls_' + d.id + '">' + (st ? esc(st.txt) : '') + '</div>';
+}
+
+function htmlPropLista(id){
+  var p = propsLista[id];
+  if (!p) return '';
+  if (p.estado === 'proponiendo') return '<div class="q-prop done">Proponiendo…</div>';
+  if (p.estado === 'error') return '<div class="q-prop err">' + esc(p.error) + '</div>';
+  if (p.estado !== 'pendiente') return '';
+  return '<div class="q-prop" title="' + esc(p.motivo) + '"><b>' + esc(p.principal) + '</b>' +
+    (p.secundaria ? ' / ' + esc(p.secundaria) : '') +
+    '<span class="conf ' + esc(p.confianza) + '">' + esc(p.confianza) + '</span>' +
+    '<div class="acc"><button class="btn primary" data-lact="aceptar" data-id="' + id + '">✓</button>' +
+    '<button class="btn" data-lact="descartar" data-id="' + id + '">✗</button></div></div>';
+}
+
+function rellenarCatLista(d){
+  var sel = document.getElementById('lc_' + d.id);
+  if (sel) opcionesCategoria(sel, true, '— Sin categoría —', d.category);
+}
+
+function docPorId(id){ return docs.filter(function(x){ return x.id === id; })[0]; }
+
+function pintarCeldaCat(id){
+  var d = docPorId(id); if (!d) return;
+  var tr = document.querySelector('tr.doc[data-id="' + id + '"]'); if (!tr) return;
+  tr.cells[1].innerHTML = htmlCeldaCat(d);
+  rellenarCatLista(d);
+  pintarLBulk();
+}
+
+function pintarLBulk(){
+  var ids = Object.keys(propsLista).filter(function(id){ return propsLista[id].estado === 'pendiente' && docPorId(id); });
+  var altas = ids.filter(function(id){ return propsLista[id].confianza === 'alta'; }).length;
+  $('lbulk').classList.toggle('on', ids.length > 0);
+  $('lbulkTxt').textContent = ids.length + ' propuesta(s) pendiente(s) · ' + altas + ' de confianza alta';
+}
+
+// Guarda la categoría de un documento del listado
+function asignar(id, category, categorySecondary){
+  var d = docPorId(id); if (!d) return Promise.resolve();
+  var antes = d.category;
+  estLista[id] = { cls: 'busy', txt: 'Guardando…' }; pintarCeldaCat(id);
+  var datos = { id: id, category: category };
+  if (categorySecondary !== undefined) datos.categorySecondary = categorySecondary;
+  return call('assign', datos).then(function(p){
+    if (!p.ok){
+      estLista[id] = { cls: 'err', txt: p.error };
+      pintarCeldaCat(id);
+      return;
+    }
+    d.category = p.documento.category;
+    d.categorySecondary = p.documento.categorySecondary;
+    if (!antes && d.category) resumen.sinCategoria = Math.max(0, resumen.sinCategoria - 1);
+    if (antes && !d.category) resumen.sinCategoria++;
+    pintarResumen();
+    estLista[id] = { cls: 'ok', txt: '✓ Guardado' };
+    pintarCeldaCat(id);
+    // Si ese documento está abierto en el editor, se alinea
+    if (actual && actual.id === id){
+      actual.category = d.category; actual.categorySecondary = d.categorySecondary;
+      opcionesCategoria($('edCat'), true, 'Sin categoría', d.category);
+      opcionesCategoria($('edCatSec'), true, 'Ninguna', d.categorySecondary);
+    }
+  });
+}
+
+$('tbody').addEventListener('click', function(e){
+  var b = e.target.closest('[data-lact]');
+  if (b){
+    e.stopPropagation();
+    var id = b.dataset.id, p = propsLista[id];
+    if (!p || p.estado !== 'pendiente') return;
+    if (b.dataset.lact === 'aceptar'){ p.estado = 'aceptada'; asignar(id, p.principal, p.secundaria); }
+    else { p.estado = 'descartada'; pintarCeldaCat(id); }
+    return;
+  }
+  if (e.target.closest('select, .lprop, .l-st, .sw')) return;   // categoría e interruptor no abren el editor
+  var tr = e.target.closest('tr.doc');
+  if (tr) abrir(tr.dataset.id);
+});
+
+$('tbody').addEventListener('change', function(e){
+  var sw = e.target.closest('input.lsw');
+  if (sw){ sw.disabled = true; cambiarActivo(sw.dataset.id, sw.checked); return; }
+  var sel = e.target.closest('select.lcat'); if (!sel) return;
+  var p = propsLista[sel.dataset.id];
+  if (p && p.estado === 'pendiente') p.estado = 'descartada';   // elegir a mano sustituye la propuesta
+  asignar(sel.dataset.id, sel.value);
+});
+
+$('btnProponerLista').addEventListener('click', function(){
+  var objetivo = docs.filter(function(d){
+    var p = propsLista[d.id];
+    return !d.category && !(p && (p.estado === 'proponiendo' || p.estado === 'pendiente'));
+  });
+  if (!objetivo.length){ toast('No hay documentos sin categoría en esta página'); return; }
+  var btn = this; btn.disabled = true;
+  var i = 0, activos = 0, hechos = 0;
+  objetivo.forEach(function(d){ propsLista[d.id] = { estado: 'proponiendo' }; pintarCeldaCat(d.id); });
+  function lanzar(){
+    while (activos < 3 && i < objetivo.length){
+      (function(d){
+        activos++;
+        call('suggest', { id: d.id }).then(function(p){
+          propsLista[d.id] = p.ok
+            ? { estado: 'pendiente', principal: p.principal, secundaria: p.secundaria || '', confianza: p.confianza, motivo: p.motivo || '' }
+            : { estado: 'error', error: p.error };
+          pintarCeldaCat(d.id);
+          activos--; hechos++;
+          btn.textContent = '✦ Proponiendo… ' + hechos + ' de ' + objetivo.length;
+          if (hechos === objetivo.length){ btn.disabled = false; btn.textContent = '✦ Proponer para los sin categoría de esta página'; }
+          else lanzar();
+        });
+      })(objetivo[i++]);
+    }
+  }
+  btn.textContent = '✦ Proponiendo… 0 de ' + objetivo.length;
+  lanzar();
+});
+
+function resolverLista(filtro, aceptar){
+  var ids = Object.keys(propsLista).filter(function(id){ return propsLista[id].estado === 'pendiente' && docPorId(id) && filtro(propsLista[id]); });
+  if (!aceptar){
+    ids.forEach(function(id){ propsLista[id].estado = 'descartada'; pintarCeldaCat(id); });
+    return;
+  }
+  // Se guardan de uno en uno para no saturar Wix Data
+  (function sig(k){
+    if (k >= ids.length) return;
+    var p = propsLista[ids[k]]; p.estado = 'aceptada';
+    asignar(ids[k], p.principal, p.secundaria).then(function(){ sig(k + 1); });
+  })(0);
+}
+$('lbtnTodas').addEventListener('click', function(){ resolverLista(function(){ return true; }, true); });
+$('lbtnAlta').addEventListener('click', function(){ resolverLista(function(p){ return p.confianza === 'alta'; }, true); });
+$('lbtnNinguna').addEventListener('click', function(){ resolverLista(function(){ return true; }, false); });
+
+function buscar(){
+  filtro.texto = $('fTexto').value.trim();
+  filtro.categoria = $('fCategoria').value;
+  filtro.estado = $('fEstado').value;
+  filtro.pagina = 0;
+  listar();
+}
+$('btnBuscar').addEventListener('click', buscar);
+$('fTexto').addEventListener('keydown', function(e){ if (e.key === 'Enter') buscar(); });
+$('fCategoria').addEventListener('change', buscar);
+$('fEstado').addEventListener('change', buscar);
+$('btnPrev').addEventListener('click', function(){ if (filtro.pagina > 0){ filtro.pagina--; listar(); } });
+$('btnNext').addEventListener('click', function(){ if (filtro.pagina < paginas - 1){ filtro.pagina++; listar(); } });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Editor
+// ═══════════════════════════════════════════════════════════════════════════
+function contar(){
+  var n = $('edContent').value.length;
+  var c = $('edCount');
+  c.textContent = num(n) + ' caracteres' + (n > MAX_CHARS ? ' — supera el máximo de ' + num(MAX_CHARS) : '');
+  c.className = 'count' + (n > MAX_CHARS ? ' over' : '');
+}
+$('edContent').addEventListener('input', contar);
+
+function hayCambios(){
+  if (!actual) return false;
+  return $('edTitulo').value.trim() !== actual.titulo ||
+         $('edCat').value !== (actual.category || '') ||
+         $('edCatSec').value !== (actual.categorySecondary || '') ||
+         $('edContent').value !== actual.content;
+}
+
+function abrir(id){
+  if (hayCambios() && !confirm('Hay cambios sin guardar en el documento abierto. ¿Descartarlos?')) return;
+  call('read', { id: id }).then(function(p){
+    if (!p.ok){ toast('Error: ' + p.error, 4000); return; }
+    actual = p.documento;
+    $('editor').style.display = 'block';
+    $('layout').classList.add('editing');
+    $('edTitulo').value = actual.titulo;
+    $('edTituloOrig').textContent = (actual.tituloOriginal && actual.tituloOriginal !== actual.titulo)
+      ? 'Título original: ' + actual.tituloOriginal : '';
+    opcionesCategoria($('edCat'), true, 'Sin categoría', actual.category);
+    opcionesCategoria($('edCatSec'), true, 'Ninguna', actual.categorySecondary);
+    $('edContent').value = actual.content;
+    $('edSug').textContent = ''; $('edSug').className = 'sug';
+    pintarMeta();
+    pintarToggle();
+    contar();
+    document.querySelectorAll('tr.doc').forEach(function(tr){ tr.classList.toggle('sel', tr.dataset.id === id); });
+    $('editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+}
+
+function pintarMeta(){
+  if (!actual) return;
+  var alta = actual.autorAlta || (actual.origen === 'gestor' ? 'desconocido' : 'Migración');
+  var mod = actual.autorModificacion
+    ? actual.autorModificacion + (actual.actualizado ? ', ' + new Date(actual.actualizado).toLocaleString('es-ES') : '')
+    : '—';
+  $('edMeta').innerHTML = 'Alta: <b>' + esc(alta) + '</b> · Última modificación: <b>' + esc(mod) + '</b>' +
+    '<br>Tipo ' + esc(actual.fileType || '—') +
+    (actual.categorySource ? ' · categoría: ' + esc(actual.categorySource) : '');
+}
+
+function pintarToggle(){
+  $('btnToggle').textContent = actual.activo ? 'Desactivar' : 'Activar';
+  $('edHead').textContent = actual.activo ? 'Editar documento' : 'Editar documento (inactivo)';
+}
+
+function cerrarEditor(){
+  actual = null;
+  $('editor').style.display = 'none';
+  $('layout').classList.remove('editing');
+  document.querySelectorAll('tr.doc.sel').forEach(function(tr){ tr.classList.remove('sel'); });
+}
+$('btnCerrarEd').addEventListener('click', function(){
+  if (hayCambios() && !confirm('Hay cambios sin guardar. ¿Cerrar igualmente?')) return;
+  cerrarEditor();
+});
+
+$('btnGuardar').addEventListener('click', function(){
+  if (!actual) return;
+  var titulo = $('edTitulo').value.trim();
+  if (!titulo){ toast('El título es obligatorio'); return; }
+  if ($('edContent').value.length > MAX_CHARS){ toast('El contenido supera el máximo. Divídelo.', 4000); return; }
+  var btn = this; btn.disabled = true;
+  var catAntes = actual.category;
+  call('save', {
+    id: actual.id, titulo: titulo,
+    category: $('edCat').value, categorySecondary: $('edCatSec').value,
+    content: $('edContent').value
+  }).then(function(p){
+    btn.disabled = false;
+    if (!p.ok){ toast('Error: ' + p.error, 4500); return; }
+    actual.titulo = titulo;
+    actual.category = $('edCat').value;
+    actual.categorySecondary = $('edCatSec').value;
+    actual.content = $('edContent').value;
+    if (!catAntes && actual.category) resumen.sinCategoria = Math.max(0, resumen.sinCategoria - 1);
+    if (catAntes && !actual.category) resumen.sinCategoria++;
+    pintarResumen();
+    actual.autorModificacion = p.documento.autorModificacion;
+    actual.actualizado = new Date().toISOString();
+    pintarMeta();
+    refrescarFila(p.documento);
+    toast('Guardado. Cathovia lo usa desde la siguiente pregunta.');
+  });
+});
+
+function refrescarFila(ligero){
+  for (var i = 0; i < docs.length; i++){ if (docs[i].id === ligero.id){ docs[i] = ligero; break; } }
+  var tr = document.querySelector('tr.doc[data-id="' + ligero.id + '"]');
+  if (!tr) return;
+  tr.classList.toggle('off', !ligero.activo);
+  tr.cells[0].innerHTML = esc(ligero.titulo || 'Sin título') + (ligero.origen === 'gestor' ? ' <span class="pill new">nuevo</span>' : '');
+  tr.cells[1].innerHTML = htmlCeldaCat(ligero);
+  rellenarCatLista(ligero);
+  tr.cells[2].textContent = num(ligero.charLength);
+  tr.cells[3].innerHTML = htmlSwitch(ligero);
+}
+
+$('btnToggle').addEventListener('click', function(){
+  if (!actual) return;
+  var btn = this; btn.disabled = true;
+  var id = actual.id, nuevo = !actual.activo;
+  if (!docPorId(id)){
+    // El documento abierto no está en la página visible: se actualiza solo el editor
+    call('toggle', { id: id, activo: nuevo }).then(function(p){
+      btn.disabled = false;
+      if (!p.ok){ toast('Error: ' + p.error, 4000); return; }
+      resumen.inactivos += p.activo ? -1 : 1; if (resumen.inactivos < 0) resumen.inactivos = 0;
+      pintarResumen();
+      if (actual && actual.id === id){ actual.activo = p.activo; pintarToggle(); }
+    });
+    return;
+  }
+  cambiarActivo(id, nuevo).then(function(){ btn.disabled = false; });
+});
+
+$('btnEliminar').addEventListener('click', function(){
+  if (!actual) return;
+  if (!confirm('¿Eliminar definitivamente "' + actual.titulo + '"?\n\nNo se puede deshacer. Si solo quieres que Cathovia deje de usarlo, desactívalo.')) return;
+  var id = actual.id, eraActivo = actual.activo, sinCat = !actual.category;
+  call('delete', { id: id }).then(function(p){
+    if (!p.ok){ toast('Error: ' + p.error, 4000); return; }
+    resumen.total = Math.max(0, resumen.total - 1);
+    if (!eraActivo) resumen.inactivos = Math.max(0, resumen.inactivos - 1);
+    if (sinCat) resumen.sinCategoria = Math.max(0, resumen.sinCategoria - 1);
+    pintarResumen();
+    actual = null; cerrarEditor();
+    docs = docs.filter(function(d){ return d.id !== id; });
+    var tr = document.querySelector('tr.doc[data-id="' + id + '"]'); if (tr) tr.remove();
+    toast('Documento eliminado');
+  });
+});
+
+$('btnLimpiarEd').addEventListener('click', function(){
+  var antes = $('edContent').value;
+  var despues = limpiarTexto(antes, false);
+  if (despues === antes){ toast('El texto ya estaba limpio'); return; }
+  $('edContent').value = despues; contar();
+  toast('Texto limpiado (' + num(antes.length - despues.length) + ' caracteres menos). Revisa y guarda.', 3500);
+});
+
+// ── Ventana de confirmación. Las propuestas se muestran de una en una. ──
+var colaModal = Promise.resolve();
+
+// Coloca la ventana justo debajo del elemento de referencia. No se usa
+// position:fixed: dentro del iframe de Wix el "centro" sería el del iframe
+// entero, que es más alto que la pantalla.
+function colocarModal(anclaFn){
+  var m = $('modal'), box = m.querySelector('.md-box');
+  m.style.height = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) + 'px';
+  var ancla = anclaFn ? anclaFn() : null;
+  var top = 16;
+  if (ancla){
+    var r = ancla.getBoundingClientRect();
+    top = r.bottom + window.scrollY + 8;
+  }
+  box.style.top = top + 'px';
+  box.style.left = Math.max(16, (document.documentElement.clientWidth - box.offsetWidth) / 2) + 'px';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function confirmarPropuesta(tituloDoc, p, anclaFn){
+  var resultado = colaModal.then(function(){
+    return new Promise(function(resolve){
+      $('mdDoc').textContent = tituloDoc || '';
+      $('mdPrin').textContent = p.principal;
+      $('mdSec').textContent = p.secundaria || '—';
+      $('mdConf').textContent = p.confianza;
+      $('mdMot').textContent = p.motivo || '';
+      $('modal').classList.add('open');
+      colocarModal(anclaFn);
+      function fin(v){
+        $('modal').classList.remove('open');
+        $('mdSi').onclick = null; $('mdNo').onclick = null;
+        resolve(v);
+      }
+      $('mdSi').onclick = function(){ fin(true); };
+      $('mdNo').onclick = function(){ fin(false); };
+    });
+  });
+  colaModal = resultado.then(function(){}, function(){});
+  return resultado;
+}
+
+$('btnProponerEd').addEventListener('click', function(){
+  if (!actual) return;
+  var btn = this; btn.disabled = true; btn.textContent = 'Proponiendo…';
+  $('edSug').className = 'sug'; $('edSug').textContent = '';
+  var docId = actual.id;
+  call('suggest', { titulo: $('edTitulo').value.trim(), content: $('edContent').value }).then(function(p){
+    btn.disabled = false; btn.textContent = '✦ Proponer categoría';
+    if (!p.ok){ $('edSug').className = 'sug err'; $('edSug').textContent = p.error; return; }
+    return confirmarPropuesta($('edTitulo').value.trim(), p, function(){ return $('edCatSec').parentNode.parentNode; }).then(function(ok){
+      if (!actual || actual.id !== docId) return;
+      if (!ok){ $('edSug').textContent = 'Propuesta descartada.'; return; }
+      $('edCat').value = p.principal;
+      $('edCatSec').value = p.secundaria || '';
+      $('edSug').textContent = 'Propuesta aceptada. Revisa y guarda.';
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Limpieza de texto
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * esPdf = true añade dos arreglos propios del PDF: une palabras partidas
+ * por guion a final de línea y une líneas cortadas dentro de un párrafo.
+ */
+function limpiarTexto(t, esPdf){
+  var s = String(t || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u00A0\u2007\u202F]/g, ' ')
+    .replace(/[\u00AD\u200B\u200C\u200D\uFEFF]/g, '')
+    .replace(/\t/g, ' ');
+
+  var lineas = s.split('\n').map(function(l){ return l.replace(/ {2,}/g, ' ').trim(); });
+
+  if (esPdf){
+    // Fuera las líneas que solo son un número de página
+    lineas = lineas.filter(function(l){ return !/^(p[áa]g(ina)?\.?\s*)?\d{1,4}$/i.test(l); });
+    var out = [];
+    for (var i = 0; i < lineas.length; i++){
+      var l = lineas[i];
+      if (out.length && l && out[out.length - 1]){
+        var prev = out[out.length - 1];
+        if (/[a-záéíóúüñ]-$/i.test(prev) && /^[a-záéíóúüñ]/.test(l)){
+          out[out.length - 1] = prev.slice(0, -1) + l; continue;
+        }
+        if (!/[.:;!?»"”)\]]$/.test(prev) && /^[a-záéíóúüñ(«"“]/.test(l)){
+          out[out.length - 1] = prev + ' ' + l; continue;
+        }
+      }
+      out.push(l);
+    }
+    lineas = out;
+  }
+
+  return lineas.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Extracción de texto
+// ═══════════════════════════════════════════════════════════════════════════
+var pdfListo = null;
+function prepararPdf(){
+  if (pdfListo) return pdfListo;
+  var url = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  // El worker se carga como Blob: un Worker de otro dominio falla dentro del iframe.
+  pdfListo = fetch(url).then(function(r){ return r.text(); }).then(function(code){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+  }).catch(function(){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = url;
+  });
+  return pdfListo;
+}
+
+function leerComo(file, modo){
+  return new Promise(function(resolve, reject){
+    var r = new FileReader();
+    r.onload = function(e){ resolve(e.target.result); };
+    r.onerror = function(){ reject(new Error('No se pudo leer el fichero')); };
+    if (modo === 'texto') r.readAsText(file); else r.readAsArrayBuffer(file);
+  });
+}
+
+function extraer(file){
+  var ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'txt' || ext === 'md'){
+    return leerComo(file, 'texto').then(function(t){ return { texto: t, tipo: ext }; });
+  }
+  if (ext === 'docx'){
+    if (typeof mammoth === 'undefined') return Promise.reject(new Error('No se cargó el lector de Word'));
+    return leerComo(file, 'buffer').then(function(buf){
+      return mammoth.extractRawText({ arrayBuffer: buf });
+    }).then(function(res){ return { texto: res.value, tipo: 'docx' }; });
+  }
+  if (ext === 'pdf'){
+    if (typeof pdfjsLib === 'undefined') return Promise.reject(new Error('No se cargó el lector de PDF'));
+    return Promise.all([prepararPdf(), leerComo(file, 'buffer')]).then(function(r){
+      return pdfjsLib.getDocument({ data: new Uint8Array(r[1]) }).promise;
+    }).then(function(pdf){
+      var paginasTxt = [], i = 1;
+      function siguiente(){
+        if (i > pdf.numPages) return Promise.resolve(paginasTxt.join('\n\n'));
+        return pdf.getPage(i).then(function(page){ return page.getTextContent(); }).then(function(tc){
+          var txt = '';
+          tc.items.forEach(function(it){ txt += it.str + (it.hasEOL ? '\n' : ''); });
+          paginasTxt.push(txt);
+          i++; return siguiente();
+        });
+      }
+      return siguiente();
+    }).then(function(t){
+      if (t.replace(/\s/g, '').length < 30) throw new Error('El PDF no tiene texto (probablemente escaneado)');
+      return { texto: t, tipo: 'pdf' };
+    });
+  }
+  if (ext === 'doc') return Promise.reject(new Error('Formato .doc antiguo: guárdalo como .docx'));
+  return Promise.reject(new Error('Formato no admitido'));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ingesta por lotes
+// ═══════════════════════════════════════════════════════════════════════════
+// Cada documento de la lista es un objeto `it`. Estados:
+//   pendiente → extrayendo → comprobando → proponiendo → listo → guardando → guardado
+//   error · omitido (duplicado no guardado)
+// Las propuestas de la IA NO se aplican solas: quedan "pendientes" en la tabla
+// hasta que se aceptan o se descartan (por fila o en bloque).
+
+var qSeq = 0;
+var CONCURRENCIA = 3;              // documentos procesándose a la vez
+var EXT_OK = ['docx', 'pdf', 'txt', 'md'];
+var enCurso = 0;
+var lote = { total: 0, hechos: 0 };
+var guardando = false;
+
+function extDe(n){ return String(n).split('.').pop().toLowerCase(); }
+function baseDe(p){ return String(p).split('/').pop(); }
+function tituloDesdeNombre(n){
+  return baseDe(n).replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+}
+function normTit(s){
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+}
+function itemPorId(id){ return cola.filter(function(x){ return x.id === id; })[0]; }
+function esOculto(ruta){
+  return ruta.split('/').some(function(seg){ return seg.charAt(0) === '.' || seg === '__MACOSX'; });
+}
+
+// ── Entrada de ficheros: sueltos, carpeta o ZIP ─────────────────────────────
+// `entradas` = [{ file, ruta }]
+function recibir(entradas){
+  var docs = [], zips = [], ignorados = 0;
+  entradas.forEach(function(e){
+    if (esOculto(e.ruta)) return;
+    var ext = extDe(e.ruta);
+    if (ext === 'zip') zips.push(e);
+    else if (EXT_OK.indexOf(ext) >= 0) docs.push(e);
+    else ignorados++;
+  });
+
+  var pendientesZip = zips.map(function(z){ return abrirZip(z); });
+  Promise.all(pendientesZip).then(function(res){
+    res.forEach(function(r){ docs = docs.concat(r.docs); ignorados += r.ignorados; });
+    if (ignorados) toast(ignorados + ' fichero(s) ignorado(s): no son .docx, .pdf, .txt ni .md', 4000);
+    if (docs.length) anadirDocumentos(docs);
+    else if (!ignorados) toast('No se encontraron documentos');
+  });
+}
+
+function abrirZip(z){
+  if (typeof JSZip === 'undefined'){
+    toast('No se cargó el lector de ZIP', 4000);
+    return Promise.resolve({ docs: [], ignorados: 1 });
+  }
+  // Se lee como ArrayBuffer y cada entrada como Uint8Array: no depende de
+  // cómo trate el navegador los Blob entre librerías.
+  return leerComo(z.file, 'buffer').then(function(buf){ return JSZip.loadAsync(new Uint8Array(buf)); }).then(function(zip){
+    var tareas = [], ignorados = 0;
+    zip.forEach(function(ruta, entry){
+      if (entry.dir || esOculto(ruta)) return;
+      if (EXT_OK.indexOf(extDe(ruta)) < 0){ ignorados++; return; }
+      tareas.push(entry.async('uint8array').then(function(u8){
+        return { file: new File([u8], baseDe(ruta)), ruta: z.ruta + '/' + ruta };
+      }));
+    });
+    return Promise.all(tareas).then(function(docs){ return { docs: docs, ignorados: ignorados }; });
+  }).catch(function(){
+    toast('No se pudo abrir ' + z.ruta, 4000);
+    return { docs: [], ignorados: 0 };
+  });
+}
+
+// Recorre una carpeta arrastrada (con subcarpetas)
+function leerEntrada(entry, ruta){
+  return new Promise(function(resolve){
+    if (entry.isFile){
+      entry.file(function(f){ resolve([{ file: f, ruta: ruta + f.name }]); }, function(){ resolve([]); });
+    } else if (entry.isDirectory){
+      var lector = entry.createReader(), todas = [];
+      (function leerTanda(){
+        // readEntries devuelve por tandas: hay que llamar hasta que venga vacío
+        lector.readEntries(function(tanda){
+          if (!tanda.length){
+            Promise.all(todas.map(function(en){ return leerEntrada(en, ruta + entry.name + '/'); }))
+              .then(function(listas){ resolve([].concat.apply([], listas)); });
+            return;
+          }
+          todas = todas.concat(Array.prototype.slice.call(tanda));
+          leerTanda();
+        }, function(){ resolve([]); });
+      })();
+    } else resolve([]);
+  });
+}
+
+function anadirDocumentos(docs){
+  $('resumenLote').classList.remove('on');
+  docs.forEach(function(d){
+    var it = {
+      id: 'q' + (++qSeq), file: d.file, ruta: d.ruta,
+      titulo: tituloDesdeNombre(d.ruta), category: $('inCatDefecto').value, categorySecondary: '',
+      texto: '', tipo: '', estado: 'pendiente', mensaje: 'En espera', duplicados: [],
+      propuesta: null, abierto: false
+    };
+    if (d.file.size > MAX_FILE){ it.estado = 'error'; it.mensaje = 'Más de 15 MB'; }
+    cola.push(it);
+    lote.total++;
+    if (it.estado === 'error') lote.hechos++;
+  });
+  renderCola();
+  bombear();
+}
+
+// ── Procesado en paralelo (CONCURRENCIA a la vez) ───────────────────────────
+function bombear(){
+  while (enCurso < CONCURRENCIA){
+    var it = cola.filter(function(x){ return x.estado === 'pendiente'; })[0];
+    if (!it) break;
+    enCurso++;
+    procesar(it).then(function(){ enCurso--; lote.hechos++; pintarProgreso(); bombear(); });
+  }
+  pintarProgreso();
+}
+
+function procesar(it){
+  it.estado = 'extrayendo'; it.mensaje = 'Extrayendo…'; renderFila(it);
+  return extraer(it.file).then(function(r){
+    if (!itemPorId(it.id)) return;               // quitado mientras tanto
+    it.tipo = r.tipo;
+    it.texto = $('inLimpiar').checked ? limpiarTexto(r.texto, r.tipo === 'pdf') : r.texto;
+    if (it.texto.length > MAX_CHARS) throw new Error('Más de ' + num(MAX_CHARS) + ' caracteres: divídelo');
+    if (it.texto.trim().length < 50) throw new Error('Texto vacío o demasiado corto');
+    it.estado = 'comprobando'; it.mensaje = 'Comprobando duplicados…'; renderFila(it);
+    return call('checkDup', { titulo: it.titulo }).then(function(p){
+      it.duplicados = (p.ok && p.duplicados) ? p.duplicados : [];
+      if ($('inProponer').checked && !it.category) return proponerItem(it);
+    }).then(function(){
+      if (!itemPorId(it.id)) return;
+      it.estado = 'listo';
+      it.mensaje = it.duplicados.length ? 'Duplicado' : 'Listo';
+      renderFila(it);
+    });
+  }).catch(function(e){
+    if (!itemPorId(it.id)) return;
+    it.estado = 'error'; it.mensaje = e.message || 'Error al extraer';
+    renderFila(it);
+  });
+}
+
+function proponerItem(it){
+  var previo = it.estado;
+  it.estado = 'proponiendo'; it.mensaje = 'Proponiendo categoría…'; renderFila(it);
+  return call('suggest', { titulo: it.titulo, content: it.texto }).then(function(p){
+    it.propuesta = p.ok
+      ? { estado: 'pendiente', principal: p.principal, secundaria: p.secundaria || '', confianza: p.confianza, motivo: p.motivo || '' }
+      : { estado: 'error', error: p.error };
+    if (previo === 'listo'){ it.estado = 'listo'; it.mensaje = it.duplicados.length ? 'Duplicado' : 'Listo'; }
+    renderFila(it);
+    pintarBulk();
+  });
+}
+
+function resolverPropuesta(it, aceptar){
+  if (!it.propuesta || it.propuesta.estado !== 'pendiente') return;
+  if (aceptar){
+    it.category = it.propuesta.principal;
+    it.categorySecondary = it.propuesta.secundaria;
+    it.propuesta.estado = 'aceptada';
+  } else {
+    it.propuesta.estado = 'descartada';
+  }
+  renderFila(it);
+}
+
+// ── Pintado ─────────────────────────────────────────────────────────────────
+function claseEstado(it){
+  if (it.estado === 'guardado') return 'ok';
+  if (it.estado === 'error') return 'err';
+  if (it.estado === 'omitido') return 'warn';
+  if (it.estado === 'listo') return it.duplicados.length ? 'warn' : 'ok';
+  return 'busy';
+}
+
+function htmlPropuesta(it){
+  var p = it.propuesta;
+  if (it.estado === 'proponiendo') return '<div class="q-prop done">Proponiendo…</div>';
+  if (!p) return '';
+  if (p.estado === 'error') return '<div class="q-prop err">' + esc(p.error) + '</div>';
+  if (p.estado === 'aceptada') return '<div class="q-prop done">✓ Aceptada</div>';
+  if (p.estado === 'descartada') return '<div class="q-prop done">Descartada</div>';
+  return '<div class="q-prop" title="' + esc(p.motivo) + '"><b>' + esc(p.principal) + '</b>' +
+    (p.secundaria ? ' / ' + esc(p.secundaria) : '') +
+    '<span class="conf ' + esc(p.confianza) + '">' + esc(p.confianza) + '</span>' +
+    '<div class="acc"><button class="btn primary" data-act="aceptar">✓</button><button class="btn" data-act="descartar">✗</button></div></div>';
+}
+
+function htmlFila(it){
+  var editable = it.estado === 'listo' || it.estado === 'error';
+  var conTexto = it.texto && it.estado !== 'guardado';
+  var acciones = '';
+  if (conTexto) acciones += '<button class="btn" data-act="texto">' + (it.abierto ? 'Ocultar' : 'Texto') + '</button> ';
+  if (it.estado === 'listo' && !(it.propuesta && it.propuesta.estado === 'pendiente')) acciones += '<button class="btn" data-act="proponer">✦</button> ';
+  if (it.estado !== 'guardado' && it.estado !== 'guardando') acciones += '<button class="btn danger" data-act="quitar">✕</button>';
+
+  var html = '<tr id="qr_' + it.id + '" data-id="' + it.id + '">' +
+    '<td><input type="text" data-f="titulo" value="' + esc(it.titulo) + '"' + (it.estado === 'listo' ? '' : ' disabled') + '>' +
+      '<div class="q-name">' + esc(it.ruta) + '</div></td>' +
+    '<td><select id="qc_' + it.id + '" data-f="category"' + (it.estado === 'listo' ? '' : ' disabled') + '></select>' +
+      '<select id="qs_' + it.id + '" data-f="categorySecondary" style="margin-top:4px"' + (it.estado === 'listo' ? '' : ' disabled') + '></select></td>' +
+    '<td>' + htmlPropuesta(it) + '</td>' +
+    '<td class="t-num">' + (it.texto ? num(it.texto.length) : '—') + '</td>' +
+    '<td><span class="q-st ' + claseEstado(it) + '"' + (it.duplicados.length ? ' title="Ya existe un documento con este título"' : '') + '>' + esc(it.mensaje) + '</span></td>' +
+    '<td class="q-acts">' + acciones + '</td></tr>';
+  if (it.abierto && conTexto){
+    html += '<tr class="q-detail" id="qd_' + it.id + '" data-id="' + it.id + '"><td colspan="6">' +
+      '<textarea data-f="texto"' + (editable ? '' : ' disabled') + '>' + esc(it.texto) + '</textarea></td></tr>';
+  }
+  return html;
+}
+
+function rellenarSelects(it){
+  var c = document.getElementById('qc_' + it.id), s = document.getElementById('qs_' + it.id);
+  if (c) opcionesCategoria(c, true, 'Sin categoría', it.category);
+  if (s) opcionesCategoria(s, true, 'Sin secundaria', it.categorySecondary);
+}
+
+function renderCola(){
+  $('qBody').innerHTML = cola.map(htmlFila).join('');
+  cola.forEach(rellenarSelects);
+  pintarPie();
+}
+
+// Repinta solo la fila de un documento (no toca las demás ni el foco)
+function renderFila(it){
+  var tr = document.getElementById('qr_' + it.id);
+  if (!tr){ renderCola(); return; }
+  var det = document.getElementById('qd_' + it.id);
+  if (det) det.remove();
+  var tmp = document.createElement('tbody');
+  tmp.innerHTML = htmlFila(it);
+  var nodos = Array.prototype.slice.call(tmp.children);
+  nodos.forEach(function(n){ tr.parentNode.insertBefore(n, tr); });
+  tr.remove();
+  rellenarSelects(it);
+  pintarPie();
+}
+
+function pintarProgreso(){
+  var activos = cola.filter(function(x){ return ['pendiente', 'extrayendo', 'comprobando', 'proponiendo'].indexOf(x.estado) >= 0; }).length;
+  if (guardando) return;
+  if (activos === 0){
+    $('prog').classList.remove('on');
+    lote = { total: 0, hechos: 0 };
+    return;
+  }
+  $('prog').classList.add('on');
+  $('progTxt').textContent = 'Procesando documentos…';
+  $('progNum').textContent = lote.hechos + ' de ' + lote.total;
+  $('progFill').style.width = (lote.total ? Math.round(lote.hechos / lote.total * 100) : 0) + '%';
+}
+
+function pintarBulk(){
+  var pend = cola.filter(function(x){ return x.propuesta && x.propuesta.estado === 'pendiente'; });
+  var altas = pend.filter(function(x){ return x.propuesta.confianza === 'alta'; }).length;
+  $('bulk').classList.toggle('on', pend.length > 0);
+  $('bulkTxt').textContent = pend.length + ' propuesta(s) pendiente(s) · ' + altas + ' de confianza alta';
+}
+
+function pintarPie(){
+  var listos = cola.filter(function(x){ return x.estado === 'listo' && !(x.propuesta && x.propuesta.estado === 'pendiente'); }).length;
+  var guardados = cola.filter(function(x){ return x.estado === 'guardado'; }).length;
+  var errores = cola.filter(function(x){ return x.estado === 'error'; }).length;
+  $('qWrap').style.display = cola.length ? 'block' : 'none';
+  $('qActions').style.display = cola.length ? 'flex' : 'none';
+  $('btnGuardarTodos').disabled = listos === 0 || guardando;
+  $('btnGuardarTodos').textContent = 'Guardar los listos (' + listos + ')';
+  $('qResumen').textContent = cola.length + ' en la lista · ' + guardados + ' guardados' + (errores ? ' · ' + errores + ' con error' : '');
+  pintarBulk();
+}
+
+// ── Eventos de la tabla (delegados: sirven para filas repintadas) ───────────
+$('qBody').addEventListener('click', function(e){
+  var b = e.target.closest('[data-act]'); if (!b) return;
+  var tr = b.closest('tr'); var it = itemPorId(tr.dataset.id); if (!it) return;
+  var act = b.dataset.act;
+  if (act === 'aceptar') resolverPropuesta(it, true);
+  else if (act === 'descartar') resolverPropuesta(it, false);
+  else if (act === 'texto'){ it.abierto = !it.abierto; renderFila(it); }
+  else if (act === 'proponer') proponerItem(it);
+  else if (act === 'quitar'){
+    cola = cola.filter(function(x){ return x.id !== it.id; });
+    var det = document.getElementById('qd_' + it.id); if (det) det.remove();
+    tr.remove(); pintarPie();
+  }
+});
+$('qBody').addEventListener('input', function(e){
+  var f = e.target.dataset.f; if (!f) return;
+  var it = itemPorId(e.target.closest('tr').dataset.id); if (!it) return;
+  if (f === 'titulo') it.titulo = e.target.value;
+  if (f === 'texto'){ it.texto = e.target.value; }
+});
+$('qBody').addEventListener('change', function(e){
+  var f = e.target.dataset.f; if (!f) return;
+  var it = itemPorId(e.target.closest('tr').dataset.id); if (!it) return;
+  if (f === 'category') it.category = e.target.value;
+  if (f === 'categorySecondary') it.categorySecondary = e.target.value;
+  if (f === 'texto') renderFila(it);
+  if (f === 'titulo' && it.estado === 'listo'){
+    // Título cambiado: se vuelve a comprobar si está duplicado
+    call('checkDup', { titulo: it.titulo }).then(function(p){
+      it.duplicados = (p.ok && p.duplicados) ? p.duplicados : [];
+      it.mensaje = it.duplicados.length ? 'Duplicado' : 'Listo';
+      renderFila(it);
+    });
+  }
+});
+
+// ── Propuestas en bloque ────────────────────────────────────────────────────
+function resolverEnBloque(filtro, aceptar){
+  cola.forEach(function(it){
+    if (it.propuesta && it.propuesta.estado === 'pendiente' && filtro(it)) resolverPropuesta(it, aceptar);
+  });
+  pintarPie();
+}
+$('btnAceptarTodas').addEventListener('click', function(){ resolverEnBloque(function(){ return true; }, true); });
+$('btnAceptarAlta').addEventListener('click', function(){ resolverEnBloque(function(it){ return it.propuesta.confianza === 'alta'; }, true); });
+$('btnDescartarTodas').addEventListener('click', function(){ resolverEnBloque(function(){ return true; }, false); });
+
+// ── Guardado del lote ───────────────────────────────────────────────────────
+$('btnGuardarTodos').addEventListener('click', function(){
+  var listos = cola.filter(function(x){ return x.estado === 'listo' && !(x.propuesta && x.propuesta.estado === 'pendiente'); });
+  if (listos.some(function(x){ return !String(x.titulo).trim(); })){ toast('Hay documentos sin título', 3500); return; }
+  var pendientes = cola.filter(function(x){ return x.propuesta && x.propuesta.estado === 'pendiente'; }).length;
+  var omitirDup = $('inOmitirDup').checked;
+
+  guardando = true; pintarPie();
+  var res = { guardados: 0, omitidos: [], errores: [] };
+  var vistos = {};                     // títulos ya guardados en este lote
+  $('prog').classList.add('on');
+
+  (function siguiente(k){
+    $('progTxt').textContent = 'Guardando…';
+    $('progNum').textContent = k + ' de ' + listos.length;
+    $('progFill').style.width = (listos.length ? Math.round(k / listos.length * 100) : 0) + '%';
+
+    if (k >= listos.length){
+      guardando = false;
+      $('prog').classList.remove('on');
+      resumen.total += res.guardados;
+      pintarResumen(); pintarPie();
+      mostrarResumenLote(res, pendientes);
+      if (res.guardados) listar();
+      return;
+    }
+    var it = listos[k];
+    var clave = normTit(it.titulo);
+    if (omitirDup && (it.duplicados.length || vistos[clave])){
+      it.estado = 'omitido'; it.mensaje = 'Duplicado: no guardado';
+      res.omitidos.push(it.titulo); renderFila(it);
+      return siguiente(k + 1);
+    }
+    it.estado = 'guardando'; it.mensaje = 'Guardando…'; renderFila(it);
+    call('create', {
+      titulo: String(it.titulo).trim(), category: it.category, categorySecondary: it.categorySecondary,
+      content: it.texto, fileType: it.tipo
+    }).then(function(p){
+      if (p.ok){
+        it.estado = 'guardado'; it.mensaje = 'Guardado'; it.abierto = false;
+        res.guardados++; vistos[clave] = true;
+        if (!it.category) resumen.sinCategoria++;
+      } else {
+        it.estado = 'listo'; it.mensaje = 'Error: ' + p.error;
+        res.errores.push(it.ruta + ' — ' + p.error);
+      }
+      renderFila(it);
+      siguiente(k + 1);
+    });
+  })(0);
+});
+
+function mostrarResumenLote(res, pendientes){
+  var errExtr = cola.filter(function(x){ return x.estado === 'error'; });
+  var html = '<b>' + res.guardados + ' guardados</b>';
+  if (res.omitidos.length) html += ' · ' + res.omitidos.length + ' duplicados no guardados';
+  if (res.errores.length) html += ' · ' + res.errores.length + ' con error al guardar';
+  if (errExtr.length) html += ' · ' + errExtr.length + ' sin poder leer';
+  if (pendientes) html += ' · ' + pendientes + ' esperan que aceptes o descartes su propuesta';
+  var lista = res.errores.concat(errExtr.map(function(x){ return x.ruta + ' — ' + x.mensaje; }));
+  if (lista.length){
+    html += '<ul>' + lista.slice(0, 50).map(function(l){ return '<li>' + esc(l) + '</li>'; }).join('') + '</ul>';
+    if (lista.length > 50) html += '<div class="hint">… y ' + (lista.length - 50) + ' más</div>';
+  }
+  $('resumenLote').innerHTML = html;
+  $('resumenLote').classList.add('on');
+}
+
+$('btnVaciar').addEventListener('click', function(){
+  cola = cola.filter(function(x){ return x.estado !== 'guardado' && x.estado !== 'omitido'; });
+  renderCola();
+});
+$('btnVaciarTodo').addEventListener('click', function(){
+  if (guardando) return;
+  if (cola.length && !confirm('¿Quitar todos los documentos de la lista? No se borra nada del corpus.')) return;
+  cola = cola.filter(function(x){ return ['extrayendo', 'comprobando', 'proponiendo'].indexOf(x.estado) >= 0; });
+  renderCola();
+  $('resumenLote').classList.remove('on');
+});
+
+// ── Selección y arrastre ────────────────────────────────────────────────────
+$('btnElegirFicheros').addEventListener('click', function(e){ e.stopPropagation(); $('fileInput').click(); });
+$('btnElegirCarpeta').addEventListener('click', function(e){ e.stopPropagation(); $('folderInput').click(); });
+$('fileInput').addEventListener('change', function(){
+  var arr = Array.prototype.slice.call(this.files).map(function(f){ return { file: f, ruta: f.name }; });
+  if (arr.length) recibir(arr);
+  this.value = '';
+});
+$('folderInput').addEventListener('change', function(){
+  var arr = Array.prototype.slice.call(this.files).map(function(f){ return { file: f, ruta: f.webkitRelativePath || f.name }; });
+  if (arr.length) recibir(arr);
+  this.value = '';
+});
+
+var dz = $('dropzone');
+dz.addEventListener('dragenter', function(e){ e.preventDefault(); this.classList.add('dragging'); });
+dz.addEventListener('dragover', function(e){ e.preventDefault(); });
+dz.addEventListener('dragleave', function(e){ if (!this.contains(e.relatedTarget)) this.classList.remove('dragging'); });
+dz.addEventListener('drop', function(e){
+  e.preventDefault(); this.classList.remove('dragging');
+  var dt = e.dataTransfer; if (!dt) return;
+  // Las entradas hay que tomarlas YA: el DataTransfer se vacía al salir del evento
+  var entradas = [];
+  if (dt.items && dt.items.length && dt.items[0].webkitGetAsEntry){
+    for (var i = 0; i < dt.items.length; i++){
+      var en = dt.items[i].webkitGetAsEntry();
+      if (en) entradas.push(en);
+    }
+  }
+  if (entradas.length){
+    Promise.all(entradas.map(function(en){ return leerEntrada(en, ''); }))
+      .then(function(listas){ recibir([].concat.apply([], listas)); });
+  } else if (dt.files && dt.files.length){
+    recibir(Array.prototype.slice.call(dt.files).map(function(f){ return { file: f, ruta: f.name }; }));
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Pestañas
+// ═══════════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click', function(){
+    document.querySelectorAll('.tab').forEach(function(x){ x.classList.remove('active'); });
+    document.querySelectorAll('.view').forEach(function(x){ x.classList.remove('active'); });
+    this.classList.add('active');
+    $(this.dataset.view).classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Arranque
+// ═══════════════════════════════════════════════════════════════════════════
+var iniciado = false;
+var intentos = 0;
+var arrancando = false;
+
+function mostrarFalloInicio(msg){
+  $('tbody').innerHTML = '<tr><td colspan="4" class="empty" style="color:var(--red)">No se pudo cargar el gestor: ' + esc(msg) + '</td></tr>';
+}
+
+function arrancar(){
+  if (iniciado || arrancando) return;
+  arrancando = true;
+  intentos++;
+  call('ready', {}, 4000).then(function(p){
+    arrancando = false;
+    if (iniciado) return;
+    if (!p.ok){
+      if (p.timeout && intentos < 5) return arrancar();
+      if (p.timeout) return mostrarFalloInicio('la página no responde. Revisa que el page code esté pegado y que el Element ID sea htmlGestorCorpus.');
+      if (esDenegado(p)) return bloquear(p.error);
+      return mostrarFalloInicio(p.error);
+    }
+    iniciado = true;
+    categorias = p.categorias || [];
+    resumen = p.resumen || resumen;
+    if (p.usuario && (p.usuario.nombre || p.usuario.email)){
+      $('hdUser').innerHTML = 'Conectado: <b>' + esc(p.usuario.nombre || p.usuario.email) + '</b>' +
+        (p.usuario.nombre && p.usuario.email ? ' (' + esc(p.usuario.email) + ')' : '');
+    }
+    pintarResumen();
+    pintarCategorias();
+    listar();
+  });
+}
+
+arrancar();
+</script>
+</body>
+</html>
