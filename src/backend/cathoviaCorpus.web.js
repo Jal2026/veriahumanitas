@@ -1,8 +1,13 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Gestor del corpus (backend)
  * Archivo:  backend/cathoviaCorpus.web.js
- * VERSION:  1.0.1
+ * VERSION:  1.0.2
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.1 → v1.0.2 — ÍNDICE DE CATEGORÍAS:
+ *   _leerIndice fallaba con "no es un JSON válido" porque Wix entrega el
+ *   campo payload ya convertido en lista, no como texto. Ahora acepta las
+ *   dos formas, y crearCategoria lo guarda en la misma forma en que lo leyó.
  *
  * CAMBIOS v1.0.0 → v1.0.1 — ACCESO POR ROLES DE WIX:
  *   Eliminada la comprobación contra CathoviaAdmins (_exigirAdmin). El
@@ -61,7 +66,7 @@
 import { webMethod, Permissions } from 'wix-web-module';
 import wixData from 'wix-data';
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const TAG = `[CathoviaCorpus][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -88,14 +93,25 @@ const FILE_TYPES = ['docx', 'txt', 'md', 'pdf', 'manual'];
 async function _leerIndice() {
   const row = await wixData.get(C_CATEGORIES, CATEGORIES_ROW_ID, AUTH);
   if (!row) throw new Error(`No existe la fila del índice en ${C_CATEGORIES}.`);
+  const bruto = row[CATEGORIES_FIELD];
   let lista = [];
-  try {
-    lista = JSON.parse(row[CATEGORIES_FIELD] || '[]');
-  } catch (e) {
-    throw new Error('El índice de categorías no es un JSON válido.');
+  let comoTexto = true;
+
+  if (Array.isArray(bruto)) {
+    // Wix puede entregar el campo ya como lista
+    lista = bruto.slice();
+    comoTexto = false;
+  } else {
+    const txt = String(bruto == null ? '' : bruto).replace(/^\uFEFF/, '').trim();
+    try {
+      lista = JSON.parse(txt || '[]');
+    } catch (e) {
+      console.error(`${TAG} payload no parseable (tipo=${typeof bruto}): ${txt.slice(0, 120)}`);
+      throw new Error('El índice de categorías no es un JSON válido.');
+    }
   }
   if (!Array.isArray(lista)) throw new Error('El índice de categorías no es una lista.');
-  return { row, lista };
+  return { row, lista, comoTexto };
 }
 
 /** Devuelve { category, categoryIndex } validados contra el índice, o error. */
@@ -178,13 +194,14 @@ export const crearCategoria = webMethod(
       const n = String(nombre || '').trim().replace(/\s+/g, ' ');
       if (n.length < 3) return { ok: false, error: 'El nombre de la categoría es demasiado corto.' };
 
-      const { row, lista } = await _leerIndice();
+      const { row, lista, comoTexto } = await _leerIndice();
       const existente = lista.find(c => _norm(c) === _norm(n));
       if (existente) return { ok: false, error: `Ya existe la categoría "${existente}".` };
 
       // ⚠️ Solo por el final: no se reordena nunca.
       lista.push(n);
-      row[CATEGORIES_FIELD] = JSON.stringify(lista);
+      // Se guarda en la misma forma en que se leyó (texto JSON o lista)
+      row[CATEGORIES_FIELD] = comoTexto ? JSON.stringify(lista) : lista;
       await wixData.update(C_CATEGORIES, row, AUTH);
 
       console.log(`${TAG} crearCategoria "${n}" → posición ${lista.length}`);
