@@ -1,8 +1,15 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Gestor del corpus (backend)
  * Archivo:  backend/cathoviaCorpus.web.js
- * VERSION:  1.0.3
+ * VERSION:  1.0.4
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.3 → v1.0.4 — ASIGNACIÓN DESDE EL LISTADO:
+ *   1. Nuevo método asignarCategoria({ id, category, categorySecondary }):
+ *      cambia solo las categorías (read-merge), sin enviar el contenido.
+ *      categorySecondary === undefined → no se toca.
+ *   2. proponerCategoria admite { id }: si no llega content, lee el
+ *      documento en servidor. Así el listado no tiene que descargar textos.
  *
  * CAMBIOS v1.0.2 → v1.0.3 — PROPUESTA DE CATEGORÍA CON IA:
  *   Nuevo método proponerCategoria({ titulo, content }). Envía al modelo el
@@ -76,7 +83,7 @@ import wixData from 'wix-data';
 import { fetch } from 'wix-fetch';
 import { getSecret } from 'wix-secrets-backend';
 
-const VERSION = '1.0.3';
+const VERSION = '1.0.4';
 const TAG = `[CathoviaCorpus][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -356,6 +363,43 @@ export const guardarDocumentoCorpus = webMethod(
   }
 );
 
+/**
+ * Cambia solo las categorías de un documento (asignación desde el listado).
+ * READ-MERGE: el resto del ítem no se toca. categorySecondary undefined = sin cambios.
+ */
+export const asignarCategoria = webMethod(
+  Permissions.SiteMember,
+  async ({ id, category, categorySecondary }) => {
+    try {
+      if (!id) return { ok: false, error: 'id requerido' };
+      const [d, { lista }] = await Promise.all([wixData.get(C_KNOWLEDGE, id, AUTH), _leerIndice()]);
+      if (!d) return { ok: false, error: 'Documento no encontrado.' };
+
+      const cat = _resolverCategoria(category, lista);
+      if (!cat.ok) return cat;
+
+      const merged = { ...d };
+      if ((d.category || '') !== cat.category) merged.categorySource = 'manual';
+      merged.category = cat.category;
+      merged.categoryIndex = cat.categoryIndex;
+
+      if (categorySecondary !== undefined) {
+        const sec = _validarSecundaria(categorySecondary, lista);
+        if (!sec.ok) return sec;
+        merged.categorySecondary = sec.valor === cat.category ? '' : sec.valor;
+      }
+
+      await wixData.update(C_KNOWLEDGE, merged, AUTH);
+      console.log(`${TAG} asignarCategoria ${id} → "${cat.category}" / "${merged.categorySecondary || ''}"`);
+      return { ok: true, documento: _docLigero(merged) };
+
+    } catch (e) {
+      console.error(`${TAG} asignarCategoria error:`, e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+);
+
 export const activarDocumentoCorpus = webMethod(
   Permissions.SiteMember,
   async ({ id, activo }) => {
@@ -480,11 +524,17 @@ export const crearDocumentoCorpus = webMethod(
  */
 export const proponerCategoria = webMethod(
   Permissions.SiteMember,
-  async ({ titulo, content }) => {
+  async ({ titulo, content, id }) => {
     const startMs = Date.now();
     try {
-      const tit = String(titulo || '').trim();
-      const txt = String(content || '').trim();
+      let tit = String(titulo || '').trim();
+      let txt = String(content || '').trim();
+      if (id && !txt) {
+        const d = await wixData.get(C_KNOWLEDGE, id, AUTH);
+        if (!d) return { ok: false, error: 'Documento no encontrado.' };
+        tit = tit || d.titleFixed || d.title || '';
+        txt = String(d.content || '').trim();
+      }
       if (!tit && txt.length < 50) return { ok: false, error: 'No hay título ni texto suficiente para proponer.' };
 
       const { lista } = await _leerIndice();
@@ -575,6 +625,7 @@ export const proponerCategoria = webMethod(
  *   eliminarDocumentoCorpus({ id })
  *   buscarDuplicados({ titulo })
  *   crearDocumentoCorpus({ titulo, category, categorySecondary, content, fileType })
- *   proponerCategoria({ titulo, content })
+ *   proponerCategoria({ titulo, content } | { id })
+ *   asignarCategoria({ id, category, categorySecondary })
  * ═══════════════════════════════════════════════════════════════════════════
  */
