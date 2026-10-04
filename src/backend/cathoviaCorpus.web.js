@@ -1,8 +1,22 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Gestor del corpus (backend)
  * Archivo:  backend/cathoviaCorpus.web.js
- * VERSION:  1.0.4
+ * VERSION:  1.0.5
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.4 → v1.0.5 — QUIÉN ESTÁ CONECTADO Y QUIÉN TOCA CADA DOCUMENTO:
+ *   1. cargarGestorCorpus devuelve `usuario` { nombre, email } del miembro
+ *      con sesión (wix-members-backend, fieldset FULL).
+ *   2. Autoría en CathoviaKnowledge — ⚠️ CREAR DOS CAMPOS DE TEXTO:
+ *        autorAlta          quién lo dio de alta desde el gestor
+ *        autorModificacion  quién hizo el último cambio desde el gestor
+ *      Formato: "Nombre Apellido <email>" (o solo el email si no hay nombre).
+ *      Alta → ambos. Editar, asignar categoría, activar/desactivar →
+ *      autorModificacion. La fecha de la última modificación es la propia
+ *      _updatedDate de Wix.
+ *      En los documentos migrados ambos campos están vacíos.
+ *   3. Eliminar: el documento desaparece, así que quién y qué se borró
+ *      queda en Site Events: [CathoviaCorpus] ELIMINADO … por …
  *
  * CAMBIOS v1.0.3 → v1.0.4 — ASIGNACIÓN DESDE EL LISTADO:
  *   1. Nuevo método asignarCategoria({ id, category, categorySecondary }):
@@ -82,8 +96,9 @@ import { webMethod, Permissions } from 'wix-web-module';
 import wixData from 'wix-data';
 import { fetch } from 'wix-fetch';
 import { getSecret } from 'wix-secrets-backend';
+import { currentMember } from 'wix-members-backend';
 
-const VERSION = '1.0.4';
+const VERSION = '1.0.5';
 const TAG = `[CathoviaCorpus][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -93,6 +108,10 @@ const C_CATEGORIES = 'CathoviaCategories';
 // ⚠️ ESPEJO de CATEGORIES_ROW_ID / CATEGORIES_FIELD en cathoviaBackend.web.js.
 const CATEGORIES_ROW_ID = 'e2bcd77e-3066-436b-9b85-0835b7bce644';
 const CATEGORIES_FIELD  = 'payload';
+
+// Campos de autoría en CathoviaKnowledge (texto). Hay que crearlos en el CMS.
+const F_AUTOR_ALTA = 'autorAlta';
+const F_AUTOR_MOD  = 'autorModificacion';
 
 const PAGE_SIZE = 50;
 const SIN_CATEGORIA = '__sin__';
@@ -152,6 +171,32 @@ function _validarSecundaria(nombre, lista) {
   return { ok: true, valor: n };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// QUIÉN ESTÁ CONECTADO
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Devuelve { id, nombre, email, etiqueta } del miembro con sesión. */
+async function _quien() {
+  let member = null;
+  try {
+    member = await currentMember.getMember({ fieldsets: ['FULL'] });
+  } catch (eFull) {
+    try { member = await currentMember.getMember(); } catch (e) { member = null; }
+  }
+  if (!member) return { id: '', nombre: '', email: '', etiqueta: 'desconocido' };
+
+  let email = member.loginEmail || '';
+  const cd = member.contactDetails || {};
+  if (!email && Array.isArray(cd.emails) && cd.emails.length > 0) {
+    email = typeof cd.emails[0] === 'string' ? cd.emails[0] : (cd.emails[0].email || '');
+  }
+  const nombre = [cd.firstName, cd.lastName].filter(Boolean).join(' ').trim() ||
+                 (member.profile && member.profile.nickname) || '';
+  email = String(email || '').trim();
+  const etiqueta = nombre && email ? `${nombre} <${email}>` : (email || nombre || member._id || 'desconocido');
+  return { id: member._id || '', nombre, email, etiqueta };
+}
+
 function _docLigero(d) {
   return {
     id: d._id,
@@ -162,7 +207,9 @@ function _docLigero(d) {
     charLength: Number(d.charLength) || (d.content || '').length,
     activo: d.activo !== false,
     origen: String(d.sourceId || '').indexOf('gestor_') === 0 ? 'gestor' : 'migrado',
-    actualizado: d._updatedDate || null
+    actualizado: d._updatedDate || null,
+    autorAlta: d[F_AUTOR_ALTA] || '',
+    autorModificacion: d[F_AUTOR_MOD] || ''
   };
 }
 
@@ -192,15 +239,21 @@ export const cargarGestorCorpus = webMethod(
   Permissions.SiteMember,
   async () => {
     try {
-      const [{ lista }, total, sinCategoria, inactivos] = await Promise.all([
+      const [{ lista }, total, sinCategoria, inactivos, yo] = await Promise.all([
         _leerIndice(),
         wixData.query(C_KNOWLEDGE).count(AUTH),
         wixData.query(C_KNOWLEDGE).isEmpty('category').count(AUTH),
-        wixData.query(C_KNOWLEDGE).eq('activo', false).count(AUTH)
+        wixData.query(C_KNOWLEDGE).eq('activo', false).count(AUTH),
+        _quien()
       ]);
 
       console.log(`${TAG} cargarGestorCorpus total=${total} sinCat=${sinCategoria} inactivos=${inactivos} cats=${lista.length}`);
-      return { ok: true, categorias: lista, resumen: { total, sinCategoria, inactivos } };
+      return {
+        ok: true,
+        categorias: lista,
+        resumen: { total, sinCategoria, inactivos },
+        usuario: { nombre: yo.nombre, email: yo.email }
+      };
 
     } catch (e) {
       console.error(`${TAG} cargarGestorCorpus error:`, e.message);
@@ -350,6 +403,7 @@ export const guardarDocumentoCorpus = webMethod(
       merged.category = cat.category;
       merged.categoryIndex = cat.categoryIndex;
       merged.categorySecondary = sec.valor;
+      merged[F_AUTOR_MOD] = (await _quien()).etiqueta;
 
       await wixData.update(C_KNOWLEDGE, merged, AUTH);
       console.log(`${TAG} guardarDocumentoCorpus ${id} chars=${txt.length} cat="${cat.category}"`);
@@ -388,6 +442,7 @@ export const asignarCategoria = webMethod(
         if (!sec.ok) return sec;
         merged.categorySecondary = sec.valor === cat.category ? '' : sec.valor;
       }
+      merged[F_AUTOR_MOD] = (await _quien()).etiqueta;
 
       await wixData.update(C_KNOWLEDGE, merged, AUTH);
       console.log(`${TAG} asignarCategoria ${id} → "${cat.category}" / "${merged.categorySecondary || ''}"`);
@@ -409,6 +464,7 @@ export const activarDocumentoCorpus = webMethod(
       if (!d) return { ok: false, error: 'Documento no encontrado.' };
 
       const merged = { ...d, activo: activo === true };
+      merged[F_AUTOR_MOD] = (await _quien()).etiqueta;
       await wixData.update(C_KNOWLEDGE, merged, AUTH);
       console.log(`${TAG} activarDocumentoCorpus ${id} → ${merged.activo}`);
       return { ok: true, id, activo: merged.activo };
@@ -425,8 +481,10 @@ export const eliminarDocumentoCorpus = webMethod(
   async ({ id }) => {
     try {
       if (!id) return { ok: false, error: 'id requerido' };
+      const [d, yo] = await Promise.all([wixData.get(C_KNOWLEDGE, id, AUTH), _quien()]);
       await wixData.remove(C_KNOWLEDGE, id, AUTH);
-      console.log(`${TAG} eliminarDocumentoCorpus ${id}`);
+      // El documento desaparece: el rastro queda en Site Events
+      console.log(`${TAG} ELIMINADO ${id} "${d ? (d.titleFixed || d.title || '') : '?'}" por ${yo.etiqueta}`);
       return { ok: true, id };
     } catch (e) {
       console.error(`${TAG} eliminarDocumentoCorpus error:`, e.message);
@@ -486,6 +544,7 @@ export const crearDocumentoCorpus = webMethod(
       if (!sec.ok) return sec;
 
       const ft = FILE_TYPES.indexOf(String(fileType || '')) >= 0 ? String(fileType) : 'manual';
+      const autor = (await _quien()).etiqueta;
       const marca = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
       const nuevo = await wixData.insert(C_KNOWLEDGE, {
@@ -500,7 +559,9 @@ export const crearDocumentoCorpus = webMethod(
         categorySecondary: sec.valor,
         categorySource: cat.category ? 'manual' : '',
         createdDate: new Date(),
-        activo: true
+        activo: true,
+        [F_AUTOR_ALTA]: autor,
+        [F_AUTOR_MOD]: autor
       }, AUTH);
 
       console.log(`${TAG} crearDocumentoCorpus "${tit}" chars=${txt.length} cat="${cat.category}" tipo=${ft}`);
