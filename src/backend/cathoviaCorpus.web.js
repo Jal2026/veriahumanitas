@@ -1,8 +1,13 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Gestor del corpus (backend)
  * Archivo:  backend/cathoviaCorpus.web.js
- * VERSION:  1.0.0
+ * VERSION:  1.0.1
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.0 → v1.0.1 — ACCESO POR ROLES DE WIX:
+ *   Eliminada la comprobación contra CathoviaAdmins (_exigirAdmin). El
+ *   acceso a la página se controla con los roles de miembro de Wix.
+ *   Los métodos siguen exigiendo sesión iniciada (Permissions.SiteMember).
  *
  * ───────────────────────────────────────────────────────────────────────────
  * QUÉ ES
@@ -48,22 +53,20 @@
  * ───────────────────────────────────────────────────────────────────────────
  * SEGURIDAD
  * ───────────────────────────────────────────────────────────────────────────
- * Todos los métodos pasan por _exigirAdmin() contra CathoviaAdmins (la misma
- * colección que el Entrenador). Falla cerrado.
+ * Acceso a la página: roles de miembro de Wix (configurado en el editor).
+ * Métodos: Permissions.SiteMember (exigen sesión iniciada).
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
 import { webMethod, Permissions } from 'wix-web-module';
 import wixData from 'wix-data';
-import { currentMember } from 'wix-members-backend';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const TAG = `[CathoviaCorpus][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
 const C_KNOWLEDGE  = 'CathoviaKnowledge';
 const C_CATEGORIES = 'CathoviaCategories';
-const C_ADMINS     = 'CathoviaAdmins';
 
 // ⚠️ ESPEJO de CATEGORIES_ROW_ID / CATEGORIES_FIELD en cathoviaBackend.web.js.
 const CATEGORIES_ROW_ID = 'e2bcd77e-3066-436b-9b85-0835b7bce644';
@@ -77,65 +80,6 @@ const SIN_CATEGORIA = '__sin__';
 const MAX_CONTENT_CHARS = 200000;
 
 const FILE_TYPES = ['docx', 'txt', 'md', 'pdf', 'manual'];
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CONTROL DE ACCESO (misma lógica que cathoviaEntrenador.web.js)
-// ═══════════════════════════════════════════════════════════════════════════
-
-async function _exigirAdmin() {
-  let memberId = '';
-  let email = '';
-
-  try {
-    let member = null;
-    try {
-      member = await currentMember.getMember({ fieldsets: ['FULL'] });
-    } catch (eFull) {
-      console.warn(`${TAG} fieldset FULL no disponible, se usa el reducido:`, eFull.message);
-      member = await currentMember.getMember();
-    }
-
-    memberId = (member && member._id) || '';
-
-    let bruto = (member && member.loginEmail) || '';
-    if (!bruto && member && member.contactDetails) {
-      const cd = member.contactDetails;
-      if (Array.isArray(cd.emails) && cd.emails.length > 0) {
-        bruto = typeof cd.emails[0] === 'string' ? cd.emails[0] : (cd.emails[0].email || '');
-      }
-    }
-    email = String(bruto || '').trim().toLowerCase();
-
-  } catch (e) {
-    console.warn(`${TAG} sin sesión de miembro:`, e.message);
-    return { ok: false, error: 'Necesitas iniciar sesión.' };
-  }
-
-  if (!memberId && !email) return { ok: false, error: 'Necesitas iniciar sesión.' };
-
-  try {
-    const res = await wixData.query(C_ADMINS).eq('activo', true).limit(200).find(AUTH);
-    const filas = res.items || [];
-
-    const autorizado = filas.some(f => {
-      const fEmail = String(f.email || '').trim().toLowerCase();
-      const fId    = String(f.memberId || '').trim();
-      if (email && fEmail && fEmail === email) return true;
-      if (memberId && fId && fId === memberId) return true;
-      return false;
-    });
-
-    if (!autorizado) {
-      console.warn(`${TAG} acceso DENEGADO: email=${email || '—'} memberId=${memberId || '—'}`);
-      return { ok: false, error: 'No tienes acceso al gestor del corpus.' };
-    }
-    return { ok: true, memberId, email };
-
-  } catch (e) {
-    console.error(`${TAG} no se pudo comprobar ${C_ADMINS} — se deniega el acceso:`, e.message);
-    return { ok: false, error: 'No se pudo verificar el acceso.' };
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -209,9 +153,6 @@ function _baseQuery(categoria, estado) {
 export const cargarGestorCorpus = webMethod(
   Permissions.SiteMember,
   async () => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       const [{ lista }, total, sinCategoria, inactivos] = await Promise.all([
         _leerIndice(),
@@ -233,9 +174,6 @@ export const cargarGestorCorpus = webMethod(
 export const crearCategoria = webMethod(
   Permissions.SiteMember,
   async ({ nombre }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       const n = String(nombre || '').trim().replace(/\s+/g, ' ');
       if (n.length < 3) return { ok: false, error: 'El nombre de la categoría es demasiado corto.' };
@@ -266,9 +204,6 @@ export const crearCategoria = webMethod(
 export const listarCorpus = webMethod(
   Permissions.SiteMember,
   async ({ texto, categoria, estado, pagina }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       const p = Math.max(0, Number(pagina) || 0);
       const t = String(texto || '').trim();
@@ -307,9 +242,6 @@ export const listarCorpus = webMethod(
 export const leerDocumentoCorpus = webMethod(
   Permissions.SiteMember,
   async ({ id }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       if (!id) return { ok: false, error: 'id requerido' };
       const d = await wixData.get(C_KNOWLEDGE, id, AUTH);
@@ -344,9 +276,6 @@ export const leerDocumentoCorpus = webMethod(
 export const guardarDocumentoCorpus = webMethod(
   Permissions.SiteMember,
   async ({ id, titulo, category, categorySecondary, content }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       if (!id) return { ok: false, error: 'id requerido' };
       const tit = String(titulo || '').trim();
@@ -398,9 +327,6 @@ export const guardarDocumentoCorpus = webMethod(
 export const activarDocumentoCorpus = webMethod(
   Permissions.SiteMember,
   async ({ id, activo }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       if (!id) return { ok: false, error: 'id requerido' };
       const d = await wixData.get(C_KNOWLEDGE, id, AUTH);
@@ -421,9 +347,6 @@ export const activarDocumentoCorpus = webMethod(
 export const eliminarDocumentoCorpus = webMethod(
   Permissions.SiteMember,
   async ({ id }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       if (!id) return { ok: false, error: 'id requerido' };
       await wixData.remove(C_KNOWLEDGE, id, AUTH);
@@ -444,9 +367,6 @@ export const eliminarDocumentoCorpus = webMethod(
 export const buscarDuplicados = webMethod(
   Permissions.SiteMember,
   async ({ titulo }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       const t = String(titulo || '').trim();
       if (!t) return { ok: true, duplicados: [] };
@@ -474,9 +394,6 @@ export const buscarDuplicados = webMethod(
 export const crearDocumentoCorpus = webMethod(
   Permissions.SiteMember,
   async ({ titulo, category, categorySecondary, content, fileType }) => {
-    const admin = await _exigirAdmin();
-    if (!admin.ok) return { ok: false, error: admin.error };
-
     try {
       const tit = String(titulo || '').trim();
       if (!tit) return { ok: false, error: 'El título es obligatorio.' };
