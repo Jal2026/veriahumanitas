@@ -1,8 +1,31 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Analizador · Intérprete emocional (Clima)
  * Archivo:  backend/cathoviaClima.js
- * VERSION:  1.1.0
+ * VERSION:  1.2.1
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.2.0 → v1.2.1 — «PRUEBA LA HERRAMIENTA» SOLO SI ES LITERAL:
+ *   Una pregunta normal puede ser una prueba o curiosidad real, y no se
+ *   distingue. prueba_herramienta queda solo para lo que suena literalmente
+ *   a prueba (test, probando, ¿funciona?, comprobar el micrófono) o para
+ *   pedir un documento concreto por su nombre («busca un documento que se
+ *   llama…»). Cualquier otra pregunta va a la intención de su contenido.
+ *   CRITERIO '2' → '3': todo se reinterpreta al procesar.
+ *
+ * CAMBIOS v1.1.0 → v1.2.0 — INTÉRPRETE MÁS EXIGENTE Y EXCLUSIONES:
+ *   1. CRITERIO DE TONO EXPLÍCITO. Con el prompt de v1.0 Haiku daba un 99 %
+ *      de tono adecuado, incluidas personas angustiadas o dolidas. Ahora
+ *      "adecuado" exige cumplir todos los criterios; "parcial" e
+ *      "inadecuado" tienen casos concretos (respuesta enciclopédica a una
+ *      pregunta breve, no reconocer la emoción expresada, doctrina ante el
+ *      dolor, juicio moral no pedido…). El modelo ve además la longitud real
+ *      de cada respuesta, aunque el texto llegue recortado.
+ *   2. REINTERPRETACIÓN AUTOMÁTICA. Cada interpretación guarda `criterio`
+ *      (CRITERIO). Las hechas con otro criterio pasan a pendientes: el botón
+ *      «Procesar histórico ahora» y el job las rehacen sin más cambios.
+ *   3. EXCLUSIONES. Las conversaciones de CONFIG.EXCLUIR_USUARIOS ya
+ *      interpretadas se marcan estado 'excluida' y no cuentan en el resumen.
+ *   Sin cambios de firma en los métodos exportados.
  *
  * CAMBIOS v1.0.0 → v1.1.0 — PROCESAR EL HISTÓRICO DESDE EL PANEL:
  *   Nuevo interpretarLote(max): interpreta hasta `max` conversaciones
@@ -65,7 +88,10 @@ import { fetch } from 'wix-fetch';
 import { getSecret } from 'wix-secrets-backend';
 import { CONFIG, C_STATS, diaDe, esDia } from 'backend/cathoviaAnalyticsCore';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.1';
+
+// Versión del criterio de interpretación. Cambiarla obliga a reinterpretar todo.
+const CRITERIO = '3';
 const TAG = `[CathoviaClima][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -99,13 +125,13 @@ export const TAXONOMIA = {
 };
 
 const DESCRIPCION_TAXONOMIA = [
-  'intencion: aprender (entender un tema) | duda_de_fe (duda personal sobre creer o practicar) | situacion_vital (familia, duelo, enfermedad, moral práctica, relación) | busca_recurso (parroquia, sacramento, horario, contacto) | prueba_herramienta (probar o curiosear la IA) | otra',
+  'intencion: aprender (entender un tema) | duda_de_fe (duda personal sobre creer o practicar) | situacion_vital (familia, duelo, enfermedad, moral práctica, relación) | busca_recurso (parroquia, sacramento, horario, contacto) | prueba_herramienta (SOLO si suena literalmente a prueba: "test", "esto es una prueba", "probando", "¿funcionas?", comprobar el micrófono o el audio; o si pide localizar un documento concreto por su nombre, p. ej. "busca un documento que se llama…") | otra',
   'emocion (al llegar, en los mensajes del usuario): sereno | curioso | inquieto | angustiado | dolido | esperanzado | agradecido | frustrado_herramienta | indeterminado',
   'intensidad: baja | media | alta',
   'necesidadPersona (¿le convendría hablar con un sacerdote, catequista o guía?): ninguna | conveniente | clara',
   'derivo (¿Cathovia sugirió hablar con una persona cuando hacía falta?): si | no | no_aplica (no hacía falta)',
-  'tono (¿las respuestas de Cathovia encajaron con el estado y la necesidad del usuario?): adecuado | parcial | inadecuado',
-  'desenlace (inferido del final): resuelto | insatisfecho | abandono | indeterminado',
+  'tono (¿las respuestas de Cathovia encajaron con el estado y la necesidad del usuario? criterios abajo): adecuado | parcial | inadecuado',
+  'desenlace (inferido del final): resuelto | insatisfecho | abandono | indeterminado (criterios abajo)',
   'senalCrisis: true solo si hay indicios de riesgo para la persona (autolesión, desesperación grave, abuso, violencia)'
 ].join('\n');
 
@@ -213,7 +239,8 @@ export function calcularSenales(mensajes) {
 
 function _transcripcion(mensajes) {
   const partes = mensajes.map((m) => {
-    const quien = m.rol === 'user' ? 'USUARIO' : 'CATHOVIA';
+    const largo = String(m.contenido || '').length;
+    const quien = m.rol === 'user' ? 'USUARIO' : `CATHOVIA (${largo.toLocaleString('es-ES')} caracteres)`;
     let t = _anonimizar(m.contenido);
     if (m.rol !== 'user' && t.length > MAX_TURNO_ASISTENTE) t = t.slice(0, MAX_TURNO_ASISTENTE) + ' […]';
     return `${quien}: ${t}`;
@@ -255,8 +282,21 @@ const SYSTEM_INTERPRETE = [
   'TAXONOMÍA:',
   DESCRIPCION_TAXONOMIA,
   '',
+  'CRITERIO DE TONO (sé exigente; un medidor que siempre aprueba no sirve):',
+  '- adecuado: SOLO si se cumplen TODOS: responde a lo que se pregunta; la extensión es proporcionada a la pregunta (una pregunta breve o concreta pide pocos párrafos); si el usuario expresa una emoción o una situación personal, Cathovia la reconoce antes de informar; el tono es cercano, sin sermón; deja abierta la conversación cuando procede.',
+  '- parcial: la respuesta es correcta pero falla en alguno de esos puntos. Por ejemplo: extensa o enciclopédica para lo que se pidió; no reconoce la emoción o la situación expresada; responde de forma genérica a algo personal; no sugiere hablar con una persona cuando convenía.',
+  '- inadecuado: contesta otra cosa; responde con doctrina o argumentos a alguien que expresa dolor, culpa o angustia sin atender primero a la persona; emite un juicio moral no pedido; es frío o condescendiente; da información errónea; ignora una señal de riesgo.',
+  '- Cada respuesta de CATHOVIA indica su longitud real en caracteres; úsala para juzgar la proporción aunque el texto llegue recortado.',
+  '',
+  'CRITERIO DE DESENLACE:',
+  '- resuelto: el usuario agradece, confirma o la respuesta cierra claramente una pregunta concreta y factual.',
+  '- insatisfecho: el usuario corrige, repite, reformula o expresa que no le sirvió.',
+  '- abandono: la conversación se corta tras una respuesta que no resolvía lo planteado (incompleta, cortada o que pedía algo más al usuario).',
+  '- indeterminado: no hay base para saberlo (por ejemplo, una sola pregunta abierta y ninguna reacción).',
+  '',
   'REGLAS:',
   '- Juzga la emoción por lo que escribe el usuario, no por el tema. Una pregunta sobre la muerte puede ser curiosidad.',
+  '- Una pregunta normal sobre cualquier tema (historia, costumbres, doctrina…) NUNCA es prueba_herramienta, aunque parezca hecha para comprobar a Cathovia: clasifícala por su contenido.',
   '- Si no hay base suficiente, usa indeterminado. No adivines.',
   '- No hagas diagnósticos clínicos ni psicológicos.',
   '- "tema": 2 a 5 palabras, genérico.',
@@ -275,6 +315,7 @@ function _validar(r) {
   out.tema = String(r.tema || '').trim().slice(0, 60);
   out.motivo = _anonimizar(String(r.motivo || '').trim()).slice(0, 200);
   out.camposInvalidos = Object.keys(TAXONOMIA).filter((c) => out[c] === null);
+  out.criterio = CRITERIO;
   return out;
 }
 
@@ -343,7 +384,9 @@ async function _procesarSesion(apiKey, sesion, intentosPrevios) {
 /**
  * Conversaciones cerradas pendientes, de la más reciente a la más antigua.
  * Pendiente = sin interpretar | con mensajes nuevos desde la interpretación |
- * en error con menos de MAX_INTENTOS.
+ * en error con menos de MAX_INTENTOS | interpretada con otro CRITERIO |
+ * excluida cuyo usuario ya no está en CONFIG.EXCLUIR_USUARIOS.
+ * Las ya interpretadas de usuarios excluidos se marcan 'excluida'.
  * Devuelve [{ sesion, intentos }].
  */
 async function _pendientes() {
@@ -362,20 +405,42 @@ async function _pendientes() {
   previas.forEach((p) => { hechas[p.sesionRef] = p; });
 
   const out = [];
+  const aExcluir = [];
   sesiones.forEach((s) => {
-    if (excluir.has(s.usuarioId || '')) return;
     const p = hechas[s._id];
+    if (excluir.has(s.usuarioId || '')) {
+      if (p && p.estado !== 'excluida') aExcluir.push(p);
+      return;
+    }
+    if (p && p.estado === 'excluida') { out.push({ sesion: s, intentos: 0 }); return; }   // ya no está excluido
     if (!p) { out.push({ sesion: s, intentos: 0 }); return; }
     if (p.estado === 'error') {
       const intentos = _json(p.interpretacion).intentos || 0;
       if (intentos < MAX_INTENTOS) out.push({ sesion: s, intentos });
       return;
     }
+    if (p.estado === 'ok' && _json(p.interpretacion).criterio !== CRITERIO) {
+      out.push({ sesion: s, intentos: 0 });   // interpretada con otro criterio
+      return;
+    }
     const act = s.fechaActualizacion ? new Date(s.fechaActualizacion).getTime() : 0;
     const int = p.interpretadoEn ? new Date(p.interpretadoEn).getTime() : 0;
     if (act > int) out.push({ sesion: s, intentos: 0 });
   });
+  if (aExcluir.length) await _marcarExcluidas(aExcluir);
   return out;
+}
+
+/** Marca como excluidas las interpretaciones de usuarios excluidos. */
+async function _marcarExcluidas(filas) {
+  for (let i = 0; i < filas.length; i += 10) {
+    await Promise.all(filas.slice(i, i + 10).map((f) =>
+      wixData.update(C_INTERP, { ...f, estado: 'excluida' }, AUTH).catch((e) => {
+        console.warn(`${TAG} no se pudo marcar excluida ${f.sesionRef}: ${e.message}`);
+      })
+    ));
+  }
+  console.log(`${TAG} ${filas.length} interpretaciones marcadas como excluidas`);
 }
 
 /** Procesa en tandas de EN_PARALELO hasta `max` o hasta agotar el presupuesto. */
@@ -463,7 +528,8 @@ function _cruce(destino, a, b) {
   destino[ka][kb] = (destino[ka][kb] || 0) + 1;
 }
 
-export function resumirClima(filas) {
+export function resumirClima(todas) {
+  const filas = todas.filter((f) => f.estado !== 'excluida');
   const ok = filas.filter((f) => f.estado === 'ok');
   const dist = {};
   Object.keys(TAXONOMIA).forEach((c) => { dist[c] = {}; });
