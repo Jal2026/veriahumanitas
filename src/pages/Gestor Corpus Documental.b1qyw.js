@@ -1,7 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Page Code del Gestor del corpus
  * Página:   Gestor Corpus Cathovia
- * VERSION:  1.0.2
+ * VERSION:  1.0.3
+ *
+ * CAMBIOS v1.0.2 → v1.0.3: mensaje 'suggest' → proponerCategoria().
  *
  * CAMBIOS v1.0.1 → v1.0.2: tras registrar onMessage se envía 'pageReady' al
  * widget, para que arranque aunque su primer 'ready' se perdiera.
@@ -26,11 +28,12 @@ import {
   activarDocumentoCorpus,
   eliminarDocumentoCorpus,
   buscarDuplicados,
-  crearDocumentoCorpus
+  crearDocumentoCorpus,
+  proponerCategoria
 } from 'backend/cathoviaCorpus.web';
 
 const EL_ID = '#htmlGestorCorpus';   // ← debe coincidir con el Element ID en el editor
-const TAG = '[PageCode_GestorCorpus][1.0.2]';
+const TAG = '[PageCode_GestorCorpus][1.0.3]';
 
 $w.onReady(function () {
   console.log(`${TAG} onReady`);
@@ -96,6 +99,10 @@ $w.onReady(function () {
           content: msg.content,
           fileType: msg.fileType
         }));
+      }
+
+      if (msg.type === 'suggest') {
+        return send('suggested', await proponerCategoria({ titulo: msg.titulo, content: msg.content }));
       }
 
       console.warn(`${TAG} mensaje no reconocido: ${msg.type}`);
