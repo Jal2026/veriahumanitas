@@ -1,8 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Analizador · Intérprete emocional (Clima)
  * Archivo:  backend/cathoviaClima.js
- * VERSION:  1.0.0
+ * VERSION:  1.1.0
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.0 → v1.1.0 — PROCESAR EL HISTÓRICO DESDE EL PANEL:
+ *   Nuevo interpretarLote(max): interpreta hasta `max` conversaciones
+ *   pendientes (por defecto 3, una tanda en paralelo) y devuelve cuántas
+ *   quedan. El panel lo llama en bucle para procesar todo el histórico sin
+ *   esperar al job. Cada llamada queda por debajo de los ~14 s del corte de
+ *   Wix; si alguna lo supera, el backend termina y la siguiente sigue.
+ *   La selección de pendientes y el bucle se comparten con el job
+ *   (_pendientes, _procesarLista): el job no cambia de comportamiento.
  *
  * QUÉ ES
  *   Interpreta cómo llega la gente a Cathovia y si se va mejor de lo que vino.
@@ -56,7 +65,7 @@ import { fetch } from 'wix-fetch';
 import { getSecret } from 'wix-secrets-backend';
 import { CONFIG, C_STATS, diaDe, esDia } from 'backend/cathoviaAnalyticsCore';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 const TAG = `[CathoviaClima][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -75,6 +84,8 @@ const MAX_INTENTOS       = 3;
 const MAX_TRANSCRIPCION  = 9000;          // caracteres enviados por conversación
 const MAX_TURNO_ASISTENTE = 700;          // de cada respuesta solo el principio
 const MAX_MOTIVOS_LECTURA = 40;
+const LOTE_MAX           = 3;             // interpretarLote: una tanda en paralelo
+const LOTE_PRESUPUESTO_MS = 9000;         // no empezar otra tanda pasado este tiempo
 
 // ── Taxonomía (capa 2). Cambiarla aquí; el prompt y la validación la leen. ──
 export const TAXONOMIA = {
@@ -330,19 +341,12 @@ async function _procesarSesion(apiKey, sesion, intentosPrevios) {
 }
 
 /**
- * JOB: interpreta las conversaciones cerradas pendientes, de la más reciente
- * a la más antigua, hasta agotar el presupuesto. Lo que falte, mañana.
+ * Conversaciones cerradas pendientes, de la más reciente a la más antigua.
  * Pendiente = sin interpretar | con mensajes nuevos desde la interpretación |
  * en error con menos de MAX_INTENTOS.
+ * Devuelve [{ sesion, intentos }].
  */
-export async function interpretarPendientes() {
-  const t0 = Date.now();
-  const apiKey = await getSecret(SECRET_API);
-  if (!apiKey) {
-    console.error(`${TAG} falta el secret ${SECRET_API}`);
-    return { ok: false, error: `Falta el secret ${SECRET_API}.` };
-  }
-
+async function _pendientes() {
   const excluir = new Set(CONFIG.EXCLUIR_USUARIOS);
   const [sesiones, previas] = await Promise.all([
     _todos(
@@ -357,38 +361,82 @@ export async function interpretarPendientes() {
   const hechas = {};
   previas.forEach((p) => { hechas[p.sesionRef] = p; });
 
-  const pendientes = sesiones.filter((s) => {
-    if (excluir.has(s.usuarioId || '')) return false;
+  const out = [];
+  sesiones.forEach((s) => {
+    if (excluir.has(s.usuarioId || '')) return;
     const p = hechas[s._id];
-    if (!p) return true;
-    if (p.estado === 'error') return (_json(p.interpretacion).intentos || 0) < MAX_INTENTOS;
+    if (!p) { out.push({ sesion: s, intentos: 0 }); return; }
+    if (p.estado === 'error') {
+      const intentos = _json(p.interpretacion).intentos || 0;
+      if (intentos < MAX_INTENTOS) out.push({ sesion: s, intentos });
+      return;
+    }
     const act = s.fechaActualizacion ? new Date(s.fechaActualizacion).getTime() : 0;
     const int = p.interpretadoEn ? new Date(p.interpretadoEn).getTime() : 0;
-    return act > int;
+    if (act > int) out.push({ sesion: s, intentos: 0 });
   });
+  return out;
+}
 
-  const cuenta = { ok: 0, error: 0, sin_mensajes: 0 };
+/** Procesa en tandas de EN_PARALELO hasta `max` o hasta agotar el presupuesto. */
+async function _procesarLista(apiKey, lista, presupuestoMs, max) {
+  const t0 = Date.now();
+  const cuenta = { ok: 0, error: 0, sin_mensajes: 0, procesadas: 0 };
+  const limite = Math.min(lista.length, max || lista.length);
   let i = 0;
-  while (i < pendientes.length) {
-    if (Date.now() - t0 > JOB_PRESUPUESTO_MS) {
-      console.warn(`${TAG} presupuesto agotado: quedan ${pendientes.length - i} conversaciones para mañana`);
-      break;
-    }
-    const lote = pendientes.slice(i, i + EN_PARALELO);
-    const res = await Promise.all(lote.map((s) => {
-      const p = hechas[s._id];
-      const intentos = p && p.estado === 'error' ? (_json(p.interpretacion).intentos || 0) : 0;
-      return _procesarSesion(apiKey, s, intentos).catch((e) => {
-        console.error(`${TAG} sesión ${s._id}: ${e.message}`);
+  while (i < limite) {
+    if (Date.now() - t0 > presupuestoMs) break;
+    const lote = lista.slice(i, Math.min(i + EN_PARALELO, limite));
+    const res = await Promise.all(lote.map((x) =>
+      _procesarSesion(apiKey, x.sesion, x.intentos).catch((e) => {
+        console.error(`${TAG} sesión ${x.sesion._id}: ${e.message}`);
         return 'error';
-      });
-    }));
+      })
+    ));
     res.forEach((r) => { cuenta[r] = (cuenta[r] || 0) + 1; });
     i += lote.length;
+  }
+  cuenta.procesadas = i;
+  return cuenta;
+}
+
+/**
+ * JOB: interpreta las conversaciones cerradas pendientes hasta agotar el
+ * presupuesto. Lo que falte, mañana.
+ */
+export async function interpretarPendientes() {
+  const t0 = Date.now();
+  const apiKey = await getSecret(SECRET_API);
+  if (!apiKey) {
+    console.error(`${TAG} falta el secret ${SECRET_API}`);
+    return { ok: false, error: `Falta el secret ${SECRET_API}.` };
+  }
+
+  const pendientes = await _pendientes();
+  const cuenta = await _procesarLista(apiKey, pendientes, JOB_PRESUPUESTO_MS - (Date.now() - t0));
+  if (cuenta.procesadas < pendientes.length) {
+    console.warn(`${TAG} presupuesto agotado: quedan ${pendientes.length - cuenta.procesadas} conversaciones para mañana`);
   }
 
   console.log(`${TAG} job fin: pendientes=${pendientes.length} ok=${cuenta.ok} error=${cuenta.error} vacías=${cuenta.sin_mensajes} ${Date.now() - t0}ms`);
   return { ok: true, pendientes: pendientes.length, ...cuenta };
+}
+
+/**
+ * PANEL: interpreta hasta `max` conversaciones pendientes y dice cuántas
+ * quedan. El panel lo llama en bucle hasta quedan === 0.
+ */
+export async function interpretarLote(max) {
+  const apiKey = await getSecret(SECRET_API);
+  if (!apiKey) throw new Error(`Falta el secret ${SECRET_API}.`);
+
+  const n = Math.max(1, Math.min(Number(max) || LOTE_MAX, LOTE_MAX));
+  const pendientes = await _pendientes();
+  const cuenta = await _procesarLista(apiKey, pendientes, LOTE_PRESUPUESTO_MS, n);
+  const quedan = pendientes.length - cuenta.procesadas;
+
+  console.log(`${TAG} lote: procesadas=${cuenta.procesadas} ok=${cuenta.ok} error=${cuenta.error} quedan=${quedan}`);
+  return { ...cuenta, pendientesAntes: pendientes.length, quedan };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
