@@ -1,7 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Page Code del Gestor del corpus
  * Página:   Gestor Corpus Cathovia
- * VERSION:  1.0.3
+ * VERSION:  1.0.4
+ *
+ * CAMBIOS v1.0.3 → v1.0.4: mensaje 'assign' → asignarCategoria(); 'suggest'
+ * reenvía también `id` (propuesta desde el listado).
  *
  * CAMBIOS v1.0.2 → v1.0.3: mensaje 'suggest' → proponerCategoria().
  *
@@ -29,11 +32,12 @@ import {
   eliminarDocumentoCorpus,
   buscarDuplicados,
   crearDocumentoCorpus,
-  proponerCategoria
+  proponerCategoria,
+  asignarCategoria
 } from 'backend/cathoviaCorpus.web';
 
 const EL_ID = '#htmlGestorCorpus';   // ← debe coincidir con el Element ID en el editor
-const TAG = '[PageCode_GestorCorpus][1.0.3]';
+const TAG = '[PageCode_GestorCorpus][1.0.4]';
 
 $w.onReady(function () {
   console.log(`${TAG} onReady`);
@@ -102,7 +106,14 @@ $w.onReady(function () {
       }
 
       if (msg.type === 'suggest') {
-        return send('suggested', await proponerCategoria({ titulo: msg.titulo, content: msg.content }));
+        return send('suggested', await proponerCategoria({ titulo: msg.titulo, content: msg.content, id: msg.id }));
+      }
+      if (msg.type === 'assign') {
+        return send('assigned', await asignarCategoria({
+          id: msg.id,
+          category: msg.category,
+          categorySecondary: msg.categorySecondary
+        }));
       }
 
       console.warn(`${TAG} mensaje no reconocido: ${msg.type}`);
