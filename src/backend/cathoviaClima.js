@@ -1,8 +1,22 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Analizador · Intérprete emocional (Clima)
  * Archivo:  backend/cathoviaClima.js
- * VERSION:  1.2.1
+ * VERSION:  1.3.0
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.2.1 → v1.3.0 — LECTURA CON COMPORTAMIENTO Y MENOS SESGOS:
+ *   1. generarLectura envía a Sonnet, además del Clima, los indicadores de
+ *      comportamiento del periodo leídos de las instantáneas de uso
+ *      (CathoviaStats): cortes probables (> CONFIG.LIMITE_CONEXION_MS),
+ *      tiempo mediano, longitud mediana frente a CONFIG.OBJETIVO_LONGITUD y
+ *      conversaciones de una sola pregunta. Mismo cálculo que el panel.
+ *   2. Desenlace separado entre conversaciones de una sola pregunta y de
+ *      varias (campo `turnos` de cada interpretación).
+ *   3. Reglas nuevas en el prompt: el desenlace indeterminado de una sola
+ *      pregunta es falta de datos, no un fallo; las pruebas de la herramienta
+ *      no son uso real ni aciertos ni fallos; la relación entre abandono,
+ *      cortes y longitud se presenta como hipótesis, no como causa.
+ *   La firma de generarLectura no cambia: el web module no se toca.
  *
  * CAMBIOS v1.2.0 → v1.2.1 — «PRUEBA LA HERRAMIENTA» SOLO SI ES LITERAL:
  *   Una pregunta normal puede ser una prueba o curiosidad real, y no se
@@ -86,9 +100,9 @@
 import wixData from 'wix-data';
 import { fetch } from 'wix-fetch';
 import { getSecret } from 'wix-secrets-backend';
-import { CONFIG, C_STATS, diaDe, esDia } from 'backend/cathoviaAnalyticsCore';
+import { CONFIG, C_STATS, diaDe, esDia, leerInstantaneas } from 'backend/cathoviaAnalyticsCore';
 
-export const VERSION = '1.2.1';
+export const VERSION = '1.3.0';
 
 // Versión del criterio de interpretación. Cambiarla obliga a reinterpretar todo.
 const CRITERIO = '3';
@@ -615,7 +629,8 @@ export function resumirClima(todas) {
 const SYSTEM_LECTURA = [
   'Eres el analista de experiencia de Cathovia, el asistente de IA de Veria Humanitas (pensamiento, cultura y tradición cristiana).',
   'Su filosofía: cada respuesta resuelve la pregunta sin demostrar todo lo que sabe; primero ayudar, después profundizar; la profundidad está disponible pero nunca se impone; una buena respuesta invita a la siguiente pregunta. Cathovia no sustituye a un sacerdote ni al acompañamiento personal.',
-  'Recibes los agregados de un periodo (JSON) y descripciones breves y neutras de algunas conversaciones.',
+  'Recibes los agregados del CLIMA de un periodo (JSON), los indicadores de COMPORTAMIENTO del mismo periodo (JSON) y descripciones breves y neutras de algunas conversaciones.',
+  'COMPORTAMIENTO: cortes = respuestas que superan el límite en que la plataforma corta la conexión (el usuario no recibe la respuesta, ve un error); longitud = caracteres de cada respuesta frente al objetivo de la filosofía de «pocos párrafos breves»; unaPregunta = conversaciones con una sola pregunta.',
   'Escribe en español una lectura para el equipo que gestiona Cathovia, con estas secciones en Markdown:',
   '## Lectura general (2-3 frases)',
   '## Cómo llega la gente',
@@ -623,7 +638,10 @@ const SYSTEM_LECTURA = [
   '## Dónde falla',
   '## Ajustes propuestos (para el Entrenador o el corpus, concretos y accionables)',
   'REGLAS:',
-  '- Usa SOLO las cifras del JSON. No inventes datos ni porcentajes.',
+  '- Usa SOLO las cifras de los JSON. No inventes datos ni porcentajes.',
+  '- El desenlace indeterminado en conversaciones de UNA sola pregunta es falta de datos (no hubo reacción que juzgar), no un fallo de Cathovia. Usa desenlaceUnaPregunta y desenlaceVariasPreguntas: juzga el desenlace sobre todo en las de varias preguntas y, del resto, di solo que impiden medir.',
+  '- Las conversaciones de intención prueba_herramienta son pruebas, no uso real: no las presentes como aciertos ni como fallos.',
+  '- Si los cortes o la longitud son altos, inclúyelos en «Dónde falla». Puedes relacionarlos con el abandono como hipótesis, nunca como causa demostrada.',
   '- Si la muestra es pequeña (menos de 30 conversaciones interpretadas), dilo al principio y modera las conclusiones.',
   '- No identifiques personas ni reproduzcas descripciones literalmente.',
   '- No hagas diagnósticos clínicos.',
@@ -642,6 +660,41 @@ function _claveLectura(desde, hasta) {
   return `lectura:${desde}_${hasta}`;
 }
 
+/**
+ * Indicadores de comportamiento del periodo desde las instantáneas de uso.
+ * Mismo cálculo que leerPeriodo en cathoviaAnalytics.web.js.
+ */
+async function _comportamientoPeriodo(desde, hasta) {
+  const dias = await leerInstantaneas('uso', desde, hasta);
+  const lim = CONFIG.LIMITE_CONEXION_MS;
+  const obj = CONFIG.OBJETIVO_LONGITUD;
+  const total = [], longitud = [], mensajes = [];
+  let consultas = 0;
+  dias.forEach(({ datos: d }) => {
+    consultas += d.consultas || 0;
+    total.push(...((d.tiempos && d.tiempos.total) || []));
+    longitud.push(...(d.respLen || []));
+    mensajes.push(...(((d.sesiones && d.sesiones.mensajes) || []).filter((n) => n > 0)));
+  });
+  const cortes = total.filter((t) => t > lim).length;
+  const largas = longitud.filter((n) => n > obj).length;
+  const unaPregunta = mensajes.filter((n) => n === 2).length;
+  return {
+    consultas,
+    respuestasConTiempoMedido: total.length,
+    cortes,
+    pctCortes: _proporcion(cortes, total.length),
+    limiteCorteSegundos: lim / 1000,
+    tiempoMedianoSegundos: total.length ? Math.round(_pct(total, 0.5) / 100) / 10 : null,
+    longitudMediana: _pct(longitud, 0.5),
+    objetivoLongitud: obj,
+    pctSobreObjetivo: _proporcion(largas, longitud.length),
+    conversacionesConMensajes: mensajes.length,
+    unaPregunta,
+    pctUnaPregunta: _proporcion(unaPregunta, mensajes.length)
+  };
+}
+
 export async function generarLectura(desde, hasta) {
   if (!esDia(desde) || !esDia(hasta) || desde > hasta) throw new Error('Periodo no válido.');
   const apiKey = await getSecret(SECRET_API);
@@ -652,8 +705,22 @@ export async function generarLectura(desde, hasta) {
   if (resumen.interpretadas === 0) throw new Error('No hay conversaciones interpretadas en el periodo.');
 
   const { taxonomia, ...agregados } = resumen;
+
+  // Desenlace por número de preguntas del usuario
+  const una = {}, varias = {};
+  filas.filter((f) => f.estado === 'ok').forEach((f) => {
+    const d = _json(f.interpretacion).desenlace || '—';
+    const destino = Number(f.turnos) === 1 ? una : varias;
+    destino[d] = (destino[d] || 0) + 1;
+  });
+  agregados.desenlaceUnaPregunta = una;
+  agregados.desenlaceVariasPreguntas = varias;
+
+  const comportamiento = await _comportamientoPeriodo(desde, hasta);
+
   const user =
-    `PERIODO: ${desde} a ${hasta}\n\nAGREGADOS:\n${JSON.stringify(agregados)}\n\n` +
+    `PERIODO: ${desde} a ${hasta}\n\nCLIMA:\n${JSON.stringify(agregados)}\n\n` +
+    `COMPORTAMIENTO:\n${JSON.stringify(comportamiento)}\n\n` +
     `DESCRIPCIONES (muestra de ${Math.min(MAX_MOTIVOS_LECTURA, resumen.interpretadas)}):\n${_muestraMotivos(filas).join('\n')}`;
 
   const t0 = Date.now();
@@ -662,6 +729,7 @@ export async function generarLectura(desde, hasta) {
   const datos = {
     desde, hasta, texto,
     interpretadas: resumen.interpretadas,
+    comportamiento,
     modelo: MODELO_LECTURA,
     generadoEn: new Date().toISOString(),
     ms: Date.now() - t0
