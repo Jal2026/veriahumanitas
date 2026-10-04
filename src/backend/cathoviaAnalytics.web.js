@@ -1,8 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Analizador (backend)
  * Archivo:  backend/cathoviaAnalytics.web.js
- * VERSION:  1.1.0
+ * VERSION:  1.2.0
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.1.0 → v1.2.0 — PROCESAR EL HISTÓRICO DESDE EL PANEL:
+ *   1. Nuevo procesarClimaLote({ max }) sobre interpretarLote de
+ *      cathoviaClima v1.1.0. Requiere cathoviaClima v1.1.0.
+ *   2. cargarAnalizador devuelve `primeraConsulta`: día de la primera
+ *      consulta de Cathovia en EgaelLog. El panel recalcula desde ahí.
  *
  * CAMBIOS v1.0.0 → v1.1.0 — INTÉRPRETE EMOCIONAL (pestaña Clima):
  *   Tres métodos nuevos sobre backend/cathoviaClima.js. Los de v1.0.0 no
@@ -53,10 +59,11 @@ import {
   leerInterpretaciones,
   resumirClima,
   generarLectura,
-  leerLectura
+  leerLectura,
+  interpretarLote
 } from 'backend/cathoviaClima';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const TAG = `[CathoviaAnalyticsWeb][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -170,10 +177,11 @@ export const cargarAnalizador = webMethod(
   Permissions.SiteMember,
   async () => {
     try {
-      const [corpus, primera, ultima] = await Promise.all([
+      const [corpus, primera, ultima, primeraLog] = await Promise.all([
         ultimaInstantanea('corpus'),
         wixData.query('CathoviaStats').eq('tipo', 'uso').ascending('fecha').limit(1).find(AUTH),
-        wixData.query('CathoviaStats').eq('tipo', 'uso').descending('fecha').limit(1).find(AUTH)
+        wixData.query('CathoviaStats').eq('tipo', 'uso').descending('fecha').limit(1).find(AUTH),
+        wixData.query('EgaelLog').eq('cursoRef', CONFIG.CURSO_ID).eq('category', 'cathovia').ascending('timestamp').limit(1).find(AUTH)
       ]);
       const diaDeFila = (r) => (r.items && r.items[0] ? String(r.items[0].clave || '').split(':')[1] : null);
 
@@ -184,6 +192,7 @@ export const cargarAnalizador = webMethod(
         coreVersion: CORE_VERSION,
         climaVersion: CLIMA_VERSION,
         hoy: diaDe(new Date()),
+        primeraConsulta: primeraLog.items && primeraLog.items[0] ? diaDe(primeraLog.items[0].timestamp) : null,
         primerDia: diaDeFila(primera),
         ultimoDia: diaDeFila(ultima),
         corpus,
@@ -489,6 +498,18 @@ export const leerLecturaClima = webMethod(
   }
 );
 
+export const procesarClimaLote = webMethod(
+  Permissions.SiteMember,
+  async ({ max }) => {
+    try {
+      return { ok: true, ...(await interpretarLote(max)) };
+    } catch (e) {
+      console.error(`${TAG} procesarClimaLote error:`, e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * MÉTODOS EXPUESTOS
  * ═══════════════════════════════════════════════════════════════════════════
@@ -499,5 +520,6 @@ export const leerLecturaClima = webMethod(
  *   leerClima({ desde, hasta })
  *   generarLecturaClima({ desde, hasta })
  *   leerLecturaClima({ desde, hasta })
+ *   procesarClimaLote({ max })            máx. 3 por llamada
  * ═══════════════════════════════════════════════════════════════════════════
  */
