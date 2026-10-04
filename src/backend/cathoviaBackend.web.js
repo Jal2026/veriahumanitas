@@ -1,8 +1,16 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA Backend (Wix Velo)
  * Archivo:  cathoviaBackend.web.js
- * VERSION:  1.6.3
- * FECHA:    1 Octubre 2026
+ * VERSION:  1.6.4
+ * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.6.3 → v1.6.4 — DOCUMENTOS INACTIVOS FUERA DEL RAG:
+ *   CathoviaKnowledge tiene un campo nuevo `activo` (booleano), gestionado
+ *   desde el Gestor del corpus. _queryCandidates descarta los documentos con
+ *   activo === false. Vacío o true = activo: los 5.372 documentos
+ *   existentes, que no tienen el campo relleno, siguen entrando igual.
+ *   El filtro es en memoria a propósito: no depende de cómo trate Wix un
+ *   campo vacío en .ne().
  *
  * CAMBIOS v1.6.2 → v1.6.3 — MARCA EN CABECERA:
  *   Cabecera: marca anterior → "VERIA HUMANITAS" en la línea 2.
@@ -157,7 +165,7 @@ const MAX_TOKENS     = 700;
 const HISTORY_LIMIT  = 10;
 const MAX_DOC_CHARS  = 8000;
 
-const V = 'CATHOVIA v1.6.3';
+const V = 'CATHOVIA v1.6.4';
 
 // ── Config RAG (Fase I — palabras clave + filtro por categoría) ──
 const KNOWLEDGE_COLLECTION  = 'CathoviaKnowledge';
@@ -998,6 +1006,7 @@ async function _queryCandidates(keywords, categories) {
 
   for (const items of results) {
     for (const item of items) {
+      if (item.activo === false) continue;   // v1.6.4: desactivado desde el Gestor del corpus
       if (!candidatesById.has(item._id)) candidatesById.set(item._id, item);
     }
   }
