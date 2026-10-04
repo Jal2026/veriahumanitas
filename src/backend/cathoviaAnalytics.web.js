@@ -1,8 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Analizador (backend)
  * Archivo:  backend/cathoviaAnalytics.web.js
- * VERSION:  1.0.0
+ * VERSION:  1.1.0
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.0 → v1.1.0 — INTÉRPRETE EMOCIONAL (pestaña Clima):
+ *   Tres métodos nuevos sobre backend/cathoviaClima.js. Los de v1.0.0 no
+ *   cambian.
+ *     leerClima({ desde, hasta })            agregados de las interpretaciones
+ *     generarLecturaClima({ desde, hasta })  lectura del periodo con Sonnet
+ *     leerLecturaClima({ desde, hasta })     recoge la lectura guardada
+ *   generarLecturaClima puede superar los ~14 s: si el widget recibe error
+ *   de conexión, el backend termina y guarda; leerLecturaClima la recoge.
  *
  * QUÉ ES
  *   webMethods del Analizador. Leen las instantáneas de CathoviaStats
@@ -39,8 +48,15 @@ import {
   leerInstantaneas,
   ultimaInstantanea
 } from 'backend/cathoviaAnalyticsCore';
+import {
+  VERSION as CLIMA_VERSION,
+  leerInterpretaciones,
+  resumirClima,
+  generarLectura,
+  leerLectura
+} from 'backend/cathoviaClima';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const TAG = `[CathoviaAnalyticsWeb][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -166,6 +182,7 @@ export const cargarAnalizador = webMethod(
         ok: true,
         version: VERSION,
         coreVersion: CORE_VERSION,
+        climaVersion: CLIMA_VERSION,
         hoy: diaDe(new Date()),
         primerDia: diaDeFila(primera),
         ultimoDia: diaDeFila(ultima),
@@ -416,6 +433,62 @@ export const recalcularCorpus = webMethod(
   }
 );
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. CLIMA (intérprete emocional)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _validarPeriodo(desde, hasta) {
+  if (!esDia(desde) || !esDia(hasta)) return 'Fechas no válidas (AAAA-MM-DD).';
+  if (desde > hasta) return 'La fecha inicial es posterior a la final.';
+  if (sumarDias(desde, MAX_DIAS_PERIODO) < hasta) return `El periodo no puede superar ${MAX_DIAS_PERIODO} días.`;
+  return '';
+}
+
+export const leerClima = webMethod(
+  Permissions.SiteMember,
+  async ({ desde, hasta }) => {
+    try {
+      const err = _validarPeriodo(desde, hasta);
+      if (err) return { ok: false, error: err };
+      const [filas, lectura] = await Promise.all([leerInterpretaciones(desde, hasta), leerLectura(desde, hasta)]);
+      const clima = resumirClima(filas);
+      console.log(`${TAG} leerClima ${desde}→${hasta} conversaciones=${clima.conversaciones} interpretadas=${clima.interpretadas}`);
+      return { ok: true, periodo: { desde, hasta }, clima, lectura };
+    } catch (e) {
+      console.error(`${TAG} leerClima error:`, e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+);
+
+export const generarLecturaClima = webMethod(
+  Permissions.SiteMember,
+  async ({ desde, hasta }) => {
+    try {
+      const err = _validarPeriodo(desde, hasta);
+      if (err) return { ok: false, error: err };
+      return { ok: true, lectura: await generarLectura(desde, hasta) };
+    } catch (e) {
+      console.error(`${TAG} generarLecturaClima error:`, e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+);
+
+export const leerLecturaClima = webMethod(
+  Permissions.SiteMember,
+  async ({ desde, hasta }) => {
+    try {
+      const err = _validarPeriodo(desde, hasta);
+      if (err) return { ok: false, error: err };
+      return { ok: true, lectura: await leerLectura(desde, hasta) };
+    } catch (e) {
+      console.error(`${TAG} leerLecturaClima error:`, e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * MÉTODOS EXPUESTOS
  * ═══════════════════════════════════════════════════════════════════════════
@@ -423,5 +496,8 @@ export const recalcularCorpus = webMethod(
  *   leerPeriodo({ desde, hasta })        días 'AAAA-MM-DD', máx. 366
  *   recalcularDia({ dia })
  *   recalcularCorpus()
+ *   leerClima({ desde, hasta })
+ *   generarLecturaClima({ desde, hasta })
+ *   leerLecturaClima({ desde, hasta })
  * ═══════════════════════════════════════════════════════════════════════════
  */
