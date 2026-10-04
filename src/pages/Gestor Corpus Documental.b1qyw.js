@@ -1,7 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Page Code del Gestor del corpus
  * Página:   Gestor Corpus Cathovia
- * VERSION:  1.0.1
+ * VERSION:  1.0.2
+ *
+ * CAMBIOS v1.0.1 → v1.0.2: tras registrar onMessage se envía 'pageReady' al
+ * widget, para que arranque aunque su primer 'ready' se perdiera.
  * FECHA:    4 Octubre 2026
  *
  * Puente entre el widget (HtmlComponent, postMessage) y
@@ -27,7 +30,7 @@ import {
 } from 'backend/cathoviaCorpus.web';
 
 const EL_ID = '#htmlGestorCorpus';   // ← debe coincidir con el Element ID en el editor
-const TAG = '[PageCode_GestorCorpus][1.0.1]';
+const TAG = '[PageCode_GestorCorpus][1.0.2]';
 
 $w.onReady(function () {
   console.log(`${TAG} onReady`);
@@ -102,4 +105,6 @@ $w.onReady(function () {
       send('error', { ok: false, error: e.message || 'Error técnico.' });
     }
   });
+
+  el.postMessage({ type: 'pageReady' });
 });
