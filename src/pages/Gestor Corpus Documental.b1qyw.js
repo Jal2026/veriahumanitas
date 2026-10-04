@@ -1,14 +1,13 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Page Code del Gestor del corpus
  * Página:   Gestor Corpus Cathovia
- * VERSION:  1.0.0
+ * VERSION:  1.0.1
  * FECHA:    4 Octubre 2026
  *
  * Puente entre el widget (HtmlComponent, postMessage) y
  * backend/cathoviaCorpus.web.js. Sin lógica propia.
  *
- * ⚠️ ACCESO: permiso de página (solo miembros) + _exigirAdmin() en backend
- *    contra CathoviaAdmins. Hacen falta los dos.
+ * ⚠️ ACCESO: roles de miembro de Wix en los permisos de la página.
  *
  * ⛔ ORDEN DE DESPLIEGUE: cathoviaBackend v1.6.4 → cathoviaCorpus →
  *    este page code → el widget.
@@ -28,7 +27,7 @@ import {
 } from 'backend/cathoviaCorpus.web';
 
 const EL_ID = '#htmlGestorCorpus';   // ← debe coincidir con el Element ID en el editor
-const TAG = '[PageCode_GestorCorpus][1.0.0]';
+const TAG = '[PageCode_GestorCorpus][1.0.1]';
 
 $w.onReady(function () {
   console.log(`${TAG} onReady`);
