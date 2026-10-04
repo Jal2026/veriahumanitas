@@ -1,8 +1,16 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA · Gestor del corpus (backend)
  * Archivo:  backend/cathoviaCorpus.web.js
- * VERSION:  1.0.2
+ * VERSION:  1.0.3
  * FECHA:    4 Octubre 2026
+ *
+ * CAMBIOS v1.0.2 → v1.0.3 — PROPUESTA DE CATEGORÍA CON IA:
+ *   Nuevo método proponerCategoria({ titulo, content }). Envía al modelo el
+ *   título, el principio del texto y el índice completo, y devuelve una
+ *   categoría principal y otra secundaria ELEGIDAS DEL ÍNDICE (lo que no
+ *   esté en él se descarta). No guarda nada: solo propone.
+ *   Modelo: claude-haiku-4-5 (el mismo fallback que usa cathoviaBackend).
+ *   Secret: EGAEL_API_KEY.
  *
  * CAMBIOS v1.0.1 → v1.0.2 — ÍNDICE DE CATEGORÍAS:
  *   _leerIndice fallaba con "no es un JSON válido" porque Wix entrega el
@@ -65,8 +73,10 @@
 
 import { webMethod, Permissions } from 'wix-web-module';
 import wixData from 'wix-data';
+import { fetch } from 'wix-fetch';
+import { getSecret } from 'wix-secrets-backend';
 
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 const TAG = `[CathoviaCorpus][${VERSION}]`;
 const AUTH = { suppressAuth: true };
 
@@ -85,6 +95,11 @@ const SIN_CATEGORIA = '__sin__';
 const MAX_CONTENT_CHARS = 200000;
 
 const FILE_TYPES = ['docx', 'txt', 'md', 'pdf', 'manual'];
+
+// Propuesta de categoría
+const SECRET_API     = 'EGAEL_API_KEY';
+const MODEL_PROPUESTA = 'claude-haiku-4-5';
+const PROPUESTA_CHARS = 6000;      // del texto solo se envía el principio
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -454,6 +469,100 @@ export const crearDocumentoCorpus = webMethod(
   }
 );
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. PROPUESTA DE CATEGORÍA (IA)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Propone categoría principal y secundaria para un documento.
+ * ⚠️ Solo devuelve nombres que existen EXACTAMENTE en el índice. Si el modelo
+ *    contesta otra cosa, se descarta. No escribe nada en el CMS.
+ */
+export const proponerCategoria = webMethod(
+  Permissions.SiteMember,
+  async ({ titulo, content }) => {
+    const startMs = Date.now();
+    try {
+      const tit = String(titulo || '').trim();
+      const txt = String(content || '').trim();
+      if (!tit && txt.length < 50) return { ok: false, error: 'No hay título ni texto suficiente para proponer.' };
+
+      const { lista } = await _leerIndice();
+      if (lista.length === 0) return { ok: false, error: 'El índice de categorías está vacío.' };
+
+      const apiKey = await getSecret(SECRET_API);
+      if (!apiKey) return { ok: false, error: `Falta el secret ${SECRET_API}.` };
+
+      const system = [
+        'Clasificas documentos del corpus de Cathovia, asistente de Veria Humanitas (pensamiento, cultura y tradición cristiana).',
+        'Recibes un índice cerrado de categorías y un documento.',
+        'Elige la categoría PRINCIPAL que mejor describe el documento y, solo si aporta, una SECUNDARIA distinta.',
+        'REGLAS: copia los nombres EXACTAMENTE como aparecen en el índice. No inventes categorías.',
+        'Responde SOLO con JSON, sin texto alrededor ni bloques de código:',
+        '{"principal":"<nombre del índice>","secundaria":"<nombre del índice o vacío>","confianza":"alta|media|baja","motivo":"<máx. 15 palabras>"}'
+      ].join('\n');
+
+      const user =
+        'ÍNDICE DE CATEGORÍAS:\n' + lista.map(c => '- ' + c).join('\n') +
+        '\n\nDOCUMENTO\nTítulo: ' + (tit || '(sin título)') +
+        '\nTexto (principio):\n' + txt.slice(0, PROPUESTA_CHARS);
+
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: MODEL_PROPUESTA,
+          max_tokens: 300,
+          system,
+          messages: [{ role: 'user', content: user }]
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data && data.error ? data.error.message : `HTTP ${res.status}`);
+
+      const raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+      let r;
+      try {
+        r = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      } catch (e) {
+        console.warn(`${TAG} proponerCategoria respuesta no JSON: ${raw.slice(0, 200)}`);
+        return { ok: false, error: 'La IA no devolvió una propuesta válida. Inténtalo de nuevo.' };
+      }
+
+      // Solo nombres del índice. Comparación exacta y, si falla, sin tildes ni mayúsculas.
+      const buscar = (n) => {
+        const v = String(n || '').trim();
+        if (!v) return '';
+        if (lista.indexOf(v) >= 0) return v;
+        const hit = lista.find(c => _norm(c) === _norm(v));
+        return hit || '';
+      };
+
+      const principal = buscar(r.principal);
+      let secundaria = buscar(r.secundaria);
+      if (secundaria === principal) secundaria = '';
+
+      if (!principal) {
+        console.warn(`${TAG} proponerCategoria fuera del índice: "${r.principal}"`);
+        return { ok: false, error: `La IA propuso "${r.principal || '—'}", que no está en el índice.` };
+      }
+
+      const confianza = ['alta', 'media', 'baja'].indexOf(r.confianza) >= 0 ? r.confianza : 'media';
+      console.log(`${TAG} proponerCategoria "${tit.slice(0, 60)}" → "${principal}" / "${secundaria}" (${confianza}) ${Date.now() - startMs}ms`);
+
+      return { ok: true, principal, secundaria, confianza, motivo: String(r.motivo || '').slice(0, 200) };
+
+    } catch (e) {
+      console.error(`${TAG} proponerCategoria error:`, e.message);
+      return { ok: false, error: e.message };
+    }
+  }
+);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * MÉTODOS EXPUESTOS
  * ═══════════════════════════════════════════════════════════════════════════
@@ -466,5 +575,6 @@ export const crearDocumentoCorpus = webMethod(
  *   eliminarDocumentoCorpus({ id })
  *   buscarDuplicados({ titulo })
  *   crearDocumentoCorpus({ titulo, category, categorySecondary, content, fileType })
+ *   proponerCategoria({ titulo, content })
  * ═══════════════════════════════════════════════════════════════════════════
  */
