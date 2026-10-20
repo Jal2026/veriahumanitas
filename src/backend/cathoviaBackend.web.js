@@ -1,8 +1,36 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  * VERIA HUMANITAS — CATHOVIA Backend (Wix Velo)
  * Archivo:  cathoviaBackend.web.js
- * VERSION:  1.6.4
- * FECHA:    4 Octubre 2026
+ * VERSION:  1.6.6
+ * FECHA:    20 Octubre 2026
+ *
+ * CAMBIOS v1.6.5 → v1.6.6 — DÍA LITÚRGICO Y LECTURAS DE LA MISA:
+ *   1. _diaLiturgico calcula, a partir de la fecha de España, el día
+ *      litúrgico: tiempo, semana, ciclo dominical y solemnidades y fiestas
+ *      (calendario general + patronos de Europa + España).
+ *   2. Colección nueva CathoviaLecturas: una fila por día (campo `fecha`,
+ *      AAAA-MM-DD) con las referencias de las lecturas de la misa en formato
+ *      español. Se lee la fila de hoy EN PARALELO con el resto de lecturas
+ *      del CMS (no añade tiempo) y se cachea 10 minutos.
+ *      Una fila con el campo `revisar` relleno NO se usa: es un día en que
+ *      la fuente (calendario de EE. UU.) no coincide con España y falta
+ *      corregirlo a mano. Al corregirla, se vacía `revisar`.
+ *   3. El bloque de fecha añade el día litúrgico y las referencias de las
+ *      lecturas de hoy. Sin lecturas, dice al modelo que no las tiene.
+ *   El texto de las lecturas NO se guarda ni se pasa: solo referencias.
+ *   El log de cada consulta guarda en `lecturas` la fecha usada, o
+ *   'pendiente' / 'sin_fila'.
+ *
+ * CAMBIOS v1.6.4 → v1.6.5 — CATHOVIA SABE LA FECHA Y LA HORA:
+ *   La API de Anthropic no da la fecha al modelo: hay que ponerla en el
+ *   prompt. _buildSystemBlocks añade un bloque con el día de la semana, la
+ *   fecha y la hora de España (Europe/Madrid, con horario de verano).
+ *   Va en un bloque propio SIN cache_control, detrás del bloque estable:
+ *   el cambio de día o de minuto no rompe la caché del prompt.
+ *   La fecha se calcula con números (Intl en 'en-US' + timeZone) y los
+ *   nombres en español salen de tablas propias: no depende de que el
+ *   runtime tenga los datos de idioma 'es-ES'.
+ *   Nada más cambia.
  *
  * CAMBIOS v1.6.3 → v1.6.4 — DOCUMENTOS INACTIVOS FUERA DEL RAG:
  *   CathoviaKnowledge tiene un campo nuevo `activo` (booleano), gestionado
@@ -165,7 +193,18 @@ const MAX_TOKENS     = 700;
 const HISTORY_LIMIT  = 10;
 const MAX_DOC_CHARS  = 8000;
 
-const V = 'CATHOVIA v1.6.4';
+const V = 'CATHOVIA v1.6.6';
+
+// ── Fecha en el prompt (v1.6.5) ──
+const ZONA_HORARIA = 'Europe/Madrid';
+const DIAS_ES  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+                  'agosto','septiembre','octubre','noviembre','diciembre'];
+
+// ── Lecturas de la misa (v1.6.6) ──
+const LECTURAS_COLLECTION = 'CathoviaLecturas';
+const LECTURAS_TTL_MS = 10 * 60 * 1000;
+let _lecturasCache = { fecha: null, ts: 0, valor: null };
 
 // ── Config RAG (Fase I — palabras clave + filtro por categoría) ──
 const KNOWLEDGE_COLLECTION  = 'CathoviaKnowledge';
@@ -298,11 +337,16 @@ export async function askCathoviaCore({ cursoId, sessionId, query, userId, userN
       return null;
     });
 
-    const [config, resources, inlineCatalog, categories] = await Promise.all([
+    // v1.6.6: fecha de España y día litúrgico (cálculo local, sin CMS)
+    const hoy = _fechaEspana();
+    const lit = hoy ? _diaLiturgico(hoy.anio, hoy.mes, hoy.dia) : null;
+
+    const [config, resources, inlineCatalog, categories, lecturas] = await Promise.all([
       _getAlignmentConfig(cursoId),
       _getResources(cursoId),
       _getCatalogInline(cursoId),
-      _getCategories()
+      _getCategories(),
+      _getLecturasDeHoy(hoy)          // v1.6.6
     ]);
 
     // Retrieval: depende de categories, va después
@@ -310,7 +354,7 @@ export async function askCathoviaCore({ cursoId, sessionId, query, userId, userN
     const knowledge = await _retrieveKnowledge(query, detectedCats);
 
     const prepMs = Date.now() - tIn;
-    console.log(`[${V}] askCathoviaCore PREP ${prepMs}ms: config=${config ? 'OK' : 'null'} recursos=${resources.length} inline=${inlineCatalog.length} cats=[${detectedCats.join('|')}] corpus=${knowledge.length}`);
+    console.log(`[${V}] askCathoviaCore PREP ${prepMs}ms: config=${config ? 'OK' : 'null'} recursos=${resources.length} inline=${inlineCatalog.length} cats=[${detectedCats.join('|')}] corpus=${knowledge.length} lecturas=${lecturas ? lecturas.fecha : 'no'}`);
 
     const apiKey = await apiKeyPromise;
     if (!apiKey) {
@@ -318,7 +362,7 @@ export async function askCathoviaCore({ cursoId, sessionId, query, userId, userN
     }
 
     // System dividido en bloque cacheable + bloque volátil
-    const systemBlocks = _buildSystemBlocks(config, resources, inlineCatalog, knowledge);
+    const systemBlocks = _buildSystemBlocks(config, resources, inlineCatalog, knowledge, hoy, lit, lecturas);
 
     // ── SESIÓN E HISTORIAL ──
     // v1.6.0: si la sesión es nueva, _crearSesion se lanza EN PARALELO con
@@ -393,7 +437,8 @@ export async function askCathoviaCore({ cursoId, sessionId, query, userId, userN
       apiMs,
       resourcesCount: resources.length,
       modeloUsado,
-      cacheStats
+      cacheStats,
+      lecturas: lecturas ? lecturas.fecha : (_lecturasCache.estado || '')
     });
 
     // v1.6.0: el OUT desglosa el tiempo. prepMs = Wix Data, apiMs = Anthropic,
@@ -1081,8 +1126,11 @@ async function _resolveAudioUrl(audioField) {
  *
  * VOLATILE: solo el corpus doctrinal (fragmentos del RAG), cambia por
  * pregunta. No se cachea.
+ *
+ * v1.6.5/v1.6.6: entre STABLE y VOLATILE, sin caché, va el bloque de fecha,
+ * día litúrgico y lecturas de hoy.
  */
-function _buildSystemBlocks(config, resources, inlineCatalog, knowledge) {
+function _buildSystemBlocks(config, resources, inlineCatalog, knowledge, hoy, lit, lecturas) {
   const stableParts = [];
   const volatileParts = [];
 
@@ -1177,12 +1225,304 @@ function _buildSystemBlocks(config, resources, inlineCatalog, knowledge) {
     { type: 'text', text: stableText, cache_control: { type: 'ephemeral' } }
   ];
 
+  // ── FECHA Y HORA (v1.6.5) — sin caché, detrás del bloque estable ──
+  const dateText = _buildDateBlock(hoy, lit, lecturas);
+  if (dateText) blocks.push({ type: 'text', text: dateText });
+
   if (volatileParts.length > 0) {
     const volatileText = volatileParts.join('\n\n');
     blocks.push({ type: 'text', text: volatileText });
   }
 
   return blocks;
+}
+
+/**
+ * v1.6.6 (sale de _buildDateBlock v1.6.5): fecha y hora de España.
+ * Los números salen de Intl con locale 'en-US' + timeZone (disponible en
+ * cualquier runtime). Devuelve { anio, mes, dia, hora, min, dow } o null si
+ * algo falla: sin fecha, Cathovia responde como en v1.6.4.
+ */
+function _fechaEspana() {
+  try {
+    const partes = {};
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: ZONA_HORARIA,
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: 'numeric', minute: 'numeric', hourCycle: 'h23'
+    }).formatToParts(new Date()).forEach(p => { partes[p.type] = p.value; });
+
+    const anio = Number(partes.year);
+    const mes  = Number(partes.month);
+    const dia  = Number(partes.day);
+    const hora = Number(partes.hour) % 24;
+    const min  = Number(partes.minute);
+    if (!anio || !mes || !dia || isNaN(hora) || isNaN(min)) return null;
+    const dow = new Date(Date.UTC(anio, mes - 1, dia)).getUTCDay();
+    return { anio, mes, dia, hora, min, dow };
+  } catch (err) {
+    console.error(`[${V}] _fechaEspana: ${err && err.message}`);
+    return null;
+  }
+}
+
+/**
+ * v1.6.5: bloque con el día de la semana, la fecha y la hora de España.
+ * v1.6.6: añade el día litúrgico y las referencias de las lecturas de hoy.
+ * Sin fecha devuelve '' y _buildSystemBlocks no añade el bloque.
+ */
+function _buildDateBlock(hoy, lit, lecturas) {
+  if (!hoy) return '';
+  try {
+    const hh = String(hoy.hora).padStart(2, '0');
+    const mm = String(hoy.min).padStart(2, '0');
+    let t = '--- FECHA Y HORA ---\n'
+      + `Hoy es ${DIAS_ES[hoy.dow]}, ${hoy.dia} de ${MESES_ES[hoy.mes - 1]} de ${hoy.anio}. `
+      + `Hora en España peninsular: ${hh}:${mm}.\n`;
+    if (lit) {
+      t += `Día litúrgico: ${lit.texto}`;
+      if (lit.celebracion && lit.celebracion !== lit.texto) t += `. Se celebra: ${lit.celebracion} (${lit.rango})`;
+      t += `. Ciclo dominical ${lit.ciclo}.\n`;
+    }
+    if (lecturas) {
+      const partes = [];
+      if (lecturas.primeraLectura) partes.push(`primera lectura, ${lecturas.primeraLectura}`);
+      if (lecturas.salmo)          partes.push(`salmo responsorial, ${lecturas.salmo}`);
+      if (lecturas.segundaLectura) partes.push(`segunda lectura, ${lecturas.segundaLectura}`);
+      if (lecturas.evangelio)      partes.push(`Evangelio, ${lecturas.evangelio}`);
+      t += `Lecturas de la misa de hoy (referencias): ${partes.join('; ')}.\n`
+        + 'Si te piden las lecturas o el Evangelio de hoy, da estas referencias; no inventes las de otros días.\n';
+    } else {
+      t += 'No tienes las lecturas de la misa de hoy: si te las piden, dilo en una frase y no las inventes.\n';
+    }
+    t += 'Usa estos datos siempre que la pregunta dependa del día o del momento. '
+      + 'No menciones la fecha si no viene al caso.';
+    return t;
+  } catch (err) {
+    console.error(`[${V}] _buildDateBlock: ${err && err.message}`);
+    return '';
+  }
+}
+
+/**
+ * v1.6.6: fila de hoy de CathoviaLecturas (cache 10 min, también cuando no
+ * hay fila). Devuelve la fila solo si su campo `revisar` está vacío; si no,
+ * null. Deja en _lecturasCache.estado la fecha usada, 'pendiente',
+ * 'sin_fila' o 'error', para el log.
+ */
+async function _getLecturasDeHoy(hoy) {
+  if (!hoy) { _lecturasCache.estado = 'sin_fecha'; return null; }
+  const fecha = `${hoy.anio}-${String(hoy.mes).padStart(2, '0')}-${String(hoy.dia).padStart(2, '0')}`;
+  const now = Date.now();
+  if (_lecturasCache.fecha === fecha && (now - _lecturasCache.ts) < LECTURAS_TTL_MS) {
+    return _lecturasCache.valor;
+  }
+  try {
+    const res = await wixData.query(LECTURAS_COLLECTION)
+      .eq('fecha', fecha)
+      .limit(1)
+      .find(AUTH);
+    const fila = (res.items || [])[0] || null;
+    let valor = null, estado;
+    if (!fila) {
+      estado = 'sin_fila';
+    } else if (fila.revisar && String(fila.revisar).trim()) {
+      estado = 'pendiente';
+      console.warn(`[${V}] _getLecturasDeHoy ${fecha}: pendiente de revisar, no se usa (${String(fila.revisar).substring(0, 80)})`);
+    } else {
+      estado = fecha;
+      valor = {
+        fecha,
+        primeraLectura: fila.primeraLectura || '',
+        salmo: fila.salmo || '',
+        segundaLectura: fila.segundaLectura || '',
+        evangelio: fila.evangelio || ''
+      };
+      if (!valor.evangelio) { valor = null; estado = 'sin_evangelio'; }
+    }
+    _lecturasCache = { fecha, ts: now, valor, estado };
+    return valor;
+  } catch (err) {
+    console.warn(`[${V}] _getLecturasDeHoy falló:`, err.message);
+    _lecturasCache.estado = 'error';
+    return null;   // sin cachear: se reintenta en la siguiente pregunta
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS — CALENDARIO LITÚRGICO (v1.6.6)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LIT_ROM  = ['', 'I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV','XVI',
+                  'XVII','XVIII','XIX','XX','XXI','XXII','XXIII','XXIV','XXV','XXVI','XXVII','XXVIII',
+                  'XXIX','XXX','XXXI','XXXII','XXXIII','XXXIV'];
+
+// Celebraciones de fecha fija con oficio propio (calendario general + Europa + España).
+// Las memorias no se listan: en ellas vale el salterio del día.
+const LIT_FIJAS = {
+  '1-1':   ['Santa María, Madre de Dios', 'solemnidad'],
+  '1-6':   ['Epifanía del Señor', 'solemnidad'],
+  '1-25':  ['Conversión de San Pablo', 'fiesta'],
+  '2-2':   ['Presentación del Señor', 'fiesta'],
+  '2-14':  ['Santos Cirilo y Metodio, patronos de Europa', 'fiesta'],
+  '2-22':  ['Cátedra de San Pedro', 'fiesta'],
+  '3-19':  ['San José', 'solemnidad'],
+  '3-25':  ['Anunciación del Señor', 'solemnidad'],
+  '4-25':  ['San Marcos, evangelista', 'fiesta'],
+  '4-29':  ['Santa Catalina de Siena, patrona de Europa', 'fiesta'],
+  '5-3':   ['Santos Felipe y Santiago, apóstoles', 'fiesta'],
+  '5-14':  ['San Matías, apóstol', 'fiesta'],
+  '5-31':  ['Visitación de la Virgen María', 'fiesta'],
+  '6-24':  ['Natividad de San Juan Bautista', 'solemnidad'],
+  '6-29':  ['Santos Pedro y Pablo, apóstoles', 'solemnidad'],
+  '7-3':   ['Santo Tomás, apóstol', 'fiesta'],
+  '7-11':  ['San Benito, patrono de Europa', 'fiesta'],
+  '7-22':  ['Santa María Magdalena', 'fiesta'],
+  '7-23':  ['Santa Brígida, patrona de Europa', 'fiesta'],
+  '7-25':  ['Santiago Apóstol, patrono de España', 'solemnidad'],
+  '8-6':   ['Transfiguración del Señor', 'fiesta'],
+  '8-9':   ['Santa Teresa Benedicta de la Cruz, patrona de Europa', 'fiesta'],
+  '8-10':  ['San Lorenzo, diácono y mártir', 'fiesta'],
+  '8-15':  ['Asunción de la Virgen María', 'solemnidad'],
+  '8-24':  ['San Bartolomé, apóstol', 'fiesta'],
+  '9-8':   ['Natividad de la Virgen María', 'fiesta'],
+  '9-14':  ['Exaltación de la Santa Cruz', 'fiesta'],
+  '9-21':  ['San Mateo, apóstol y evangelista', 'fiesta'],
+  '9-29':  ['Santos Arcángeles Miguel, Gabriel y Rafael', 'fiesta'],
+  '10-12': ['Nuestra Señora del Pilar', 'fiesta'],
+  '10-18': ['San Lucas, evangelista', 'fiesta'],
+  '10-28': ['Santos Simón y Judas, apóstoles', 'fiesta'],
+  '11-1':  ['Todos los Santos', 'solemnidad'],
+  '11-2':  ['Conmemoración de todos los fieles difuntos', 'conmemoración'],
+  '11-9':  ['Dedicación de la Basílica de Letrán', 'fiesta'],
+  '11-30': ['San Andrés, apóstol', 'fiesta'],
+  '12-8':  ['Inmaculada Concepción de la Virgen María', 'solemnidad'],
+  '12-25': ['Natividad del Señor', 'solemnidad'],
+  '12-26': ['San Esteban, protomártir', 'fiesta'],
+  '12-27': ['San Juan, apóstol y evangelista', 'fiesta'],
+  '12-28': ['Santos Inocentes, mártires', 'fiesta']
+};
+// Fiestas del Señor que, en domingo del Tiempo Ordinario, se celebran en lugar del domingo
+const LIT_FIESTAS_SENOR = ['2-2', '8-6', '9-14', '11-9'];
+
+function _litDn(y, m, d) { return Math.round(Date.UTC(y, m - 1, d) / 86400000); }
+function _litDow(dn) { return ((dn % 7) + 11) % 7; }            // 0 = domingo (1/1/1970 fue jueves)
+
+function _litPascua(y) {                                          // cómputo gregoriano (Meeus/Jones/Butcher)
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31), dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return _litDn(y, mes, dia);
+}
+function _litAdviento1(y) {                                       // domingo I de Adviento
+  const nav = _litDn(y, 12, 25), dw = _litDow(nav);
+  return nav - (dw === 0 ? 7 : dw) - 21;
+}
+function _litBautismo(y) {                                        // domingo después del 6 de enero
+  const ep = _litDn(y, 1, 6);
+  return ep + (7 - _litDow(ep));
+}
+function _litSalterio(semana) { return ((semana - 1) % 4) + 1; }
+
+/**
+ * Día litúrgico (rito romano, calendario de España) para una fecha civil.
+ * Devuelve { texto, tiempo, semana, salterio, ciclo, dow, celebracion, rango, propio }.
+ *   salterio: 1-4, o null si el día no usa el salterio.
+ *   propio:   true si la Liturgia de las Horas del día es propia y no está en
+ *             los textos del salterio (solemnidades, fiestas, Navidad, Triduo,
+ *             Octava de Pascua, Pentecostés).
+ * Límites conocidos: de los traslados solo aplica el de la Anunciación (no el
+ * de San José en Semana Santa); no incluye fiestas diocesanas ni locales.
+ */
+function _diaLiturgico(y, m, d) {
+  const T = _litDn(y, m, d), dw = _litDow(T), dia = DIAS_ES[dw];
+  const P = _litPascua(y), ceniza = P - 46, ramos = P - 7, jueves = P - 3, pentecostes = P + 49;
+  const adv1 = _litAdviento1(y), cristoRey = adv1 - 7, navidad = _litDn(y, 12, 25), bautismo = _litBautismo(y);
+  const finAnio = T >= adv1 ? y + 1 : y;
+  const ciclo = ['C', 'A', 'B'][finAnio % 3];
+
+  const r = { texto: '', tiempo: '', semana: null, salterio: null, ciclo, dow: dw, celebracion: null, rango: null, propio: false };
+  const propio = (texto, celebracion, rango) => Object.assign(r, { texto, celebracion: celebracion || null, rango: rango || null, propio: true });
+
+  // ── Tiempos ──
+  if (T >= navidad || T <= bautismo) {
+    r.tiempo = 'navidad';
+    if (T === bautismo) return propio('Bautismo del Señor', 'Bautismo del Señor', 'fiesta');
+    const ep = _litDn(y, 1, 6);
+    // Sagrada Familia: domingo de la Octava de Navidad, o el 30 si no hay domingo
+    const navDw = _litDow(navidad);
+    const sagradaFamilia = navDw === 0 ? _litDn(y, 12, 30) : navidad + (7 - navDw);
+    if (T === sagradaFamilia) return propio('Sagrada Familia de Jesús, María y José', 'Sagrada Familia de Jesús, María y José', 'fiesta');
+    let texto;
+    if (T >= navidad) texto = `${dia} de la Octava de Navidad`;
+    else if (T < ep) texto = dw === 0 ? 'domingo II después de Navidad' : `${dia} del tiempo de Navidad, antes de la Epifanía`;
+    else texto = `${dia} del tiempo de Navidad, después de la Epifanía`;
+    const fijaNav = LIT_FIJAS[`${m}-${d}`];
+    if (fijaNav && fijaNav[1] === 'solemnidad') texto = fijaNav[0];   // Navidad, Santa María Madre de Dios, Epifanía
+    return fijaNav ? propio(texto, fijaNav[0], fijaNav[1]) : propio(texto);
+  } else if (T >= adv1) {
+    r.tiempo = 'adviento'; r.semana = Math.floor((T - adv1) / 7) + 1; r.salterio = r.semana;
+    r.texto = dw === 0 ? `domingo ${LIT_ROM[r.semana]} de Adviento` : `${dia} de la ${LIT_ROM[r.semana]} semana de Adviento`;
+  } else if (T < ceniza) {
+    r.tiempo = 'ordinario'; r.semana = Math.floor((T - bautismo) / 7) + 1; r.salterio = _litSalterio(r.semana);
+  } else if (T < ceniza + 4) {
+    r.tiempo = 'cuaresma'; r.salterio = 4;
+    r.texto = T === ceniza ? 'Miércoles de Ceniza' : `${dia} después de Ceniza`;
+  } else if (T < ramos) {
+    r.tiempo = 'cuaresma'; r.semana = Math.floor((T - (ceniza + 4)) / 7) + 1; r.salterio = _litSalterio(r.semana);
+    r.texto = dw === 0 ? `domingo ${LIT_ROM[r.semana]} de Cuaresma` : `${dia} de la ${LIT_ROM[r.semana]} semana de Cuaresma`;
+  } else if (T <= jueves) {
+    r.tiempo = 'semana_santa'; r.salterio = 2;
+    r.texto = T === ramos ? 'Domingo de Ramos en la Pasión del Señor' : `${dia.charAt(0).toUpperCase() + dia.slice(1)} Santo`;
+  } else if (T < P) {
+    r.tiempo = 'triduo';
+    propio(T === P - 2 ? 'Viernes Santo de la Pasión del Señor' : 'Sábado Santo');
+  } else if (T < P + 7) {
+    r.tiempo = 'pascua';
+    propio(T === P ? 'Domingo de Pascua de la Resurrección del Señor' : `${dia} de la Octava de Pascua`);
+  } else if (T < pentecostes) {
+    r.tiempo = 'pascua'; r.semana = Math.floor((T - P) / 7) + 1; r.salterio = _litSalterio(r.semana);
+    r.texto = dw === 0 ? `domingo ${LIT_ROM[r.semana]} de Pascua` : `${dia} de la ${LIT_ROM[r.semana]} semana de Pascua`;
+  } else if (T === pentecostes) {
+    r.tiempo = 'pascua';
+    return propio('Domingo de Pentecostés', 'Pentecostés', 'solemnidad');
+  } else {
+    r.tiempo = 'ordinario'; r.semana = 34 - Math.round((cristoRey - (T - dw)) / 7); r.salterio = _litSalterio(r.semana);
+  }
+  if (r.tiempo === 'ordinario') {
+    r.texto = dw === 0 ? `domingo ${LIT_ROM[r.semana]} del Tiempo Ordinario`
+                       : `${dia} de la ${LIT_ROM[r.semana]} semana del Tiempo Ordinario`;
+  }
+  if (r.propio) return r;
+
+  // ── Celebraciones móviles (solemnidades y fiestas en España) ──
+  const moviles = {
+    [P + 42]: ['Ascensión del Señor', 'solemnidad'],
+    [P + 53]: ['Jesucristo, Sumo y Eterno Sacerdote', 'fiesta'],
+    [P + 56]: ['Santísima Trinidad', 'solemnidad'],
+    [P + 63]: ['Santísimo Cuerpo y Sangre de Cristo', 'solemnidad'],
+    [P + 68]: ['Sagrado Corazón de Jesús', 'solemnidad'],
+    [cristoRey]: ['Jesucristo, Rey del Universo', 'solemnidad']
+  };
+  if (moviles[T]) return propio(r.texto, moviles[T][0], moviles[T][1]);
+
+  // ── Anunciación trasladada ──
+  // En Semana Santa u Octava de Pascua pasa al lunes después del domingo II de
+  // Pascua; en domingo de Cuaresma, al lunes siguiente.
+  const anun = _litDn(y, 3, 25);
+  const anunTrasladada = (anun >= ramos && anun < P + 8) ? P + 8 : (_litDow(anun) === 0 && anun > ceniza ? anun + 1 : null);
+  if (anunTrasladada !== null && T === anunTrasladada) return propio(r.texto, 'Anunciación del Señor', 'solemnidad');
+
+  // ── Celebraciones de fecha fija ──
+  // No desplazan a los domingos de Adviento, Cuaresma y Pascua ni a la Semana Santa.
+  if (r.tiempo === 'semana_santa' || (dw === 0 && r.tiempo !== 'ordinario')) return r;
+  const clave = `${m}-${d}`, fija = LIT_FIJAS[clave];
+  if (!fija) return r;
+  if (clave === '3-25' && anunTrasladada !== null) return r;
+  if (dw === 0 && fija[1] === 'fiesta' && LIT_FIESTAS_SENOR.indexOf(clave) === -1) return r;
+  return propio(r.texto, fija[0], fija[1]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1284,7 +1624,7 @@ async function _getMessageCount(sessionId) {
 // HELPERS — LOGGING
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function _log({ cursoId, sessionId, userId, query, respuesta, timeMs, prepMs, apiMs, resourcesCount, modeloUsado, cacheStats }) {
+async function _log({ cursoId, sessionId, userId, query, respuesta, timeMs, prepMs, apiMs, resourcesCount, modeloUsado, cacheStats, lecturas }) {
   try {
     await wixData.insert('EgaelLog', {
       title: 'cathovia_query',
@@ -1302,7 +1642,8 @@ async function _log({ cursoId, sessionId, userId, query, respuesta, timeMs, prep
         cacheHit: (cacheStats && cacheStats.hit) || 0,
         cacheCreate: (cacheStats && cacheStats.create) || 0,
         inputTokens: (cacheStats && cacheStats.input) || 0,
-        outputTokens: (cacheStats && cacheStats.output) || 0
+        outputTokens: (cacheStats && cacheStats.output) || 0,
+        lecturas: lecturas || ''          // v1.6.6: fecha de CathoviaLecturas usada, 'pendiente' o 'sin_fila'
       }),
       timeMs: timeMs,
       timestamp: new Date()
