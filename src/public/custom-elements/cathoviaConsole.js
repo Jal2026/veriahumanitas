@@ -2,8 +2,22 @@
  * VERIA HUMANITAS — CATHOVIA Console (Wix Custom Element)
  * Archivo:  cathoviaConsole.js
  * Tag name: cathovia-console
- * VERSION:  1.6.11
+ * VERSION:  1.6.12
  * FECHA:    21 Octubre 2026
+ *
+ * CAMBIOS v1.6.11 → v1.6.12 — COPIAR LAS RESPUESTAS:
+ *   Botón 📋 "Copiar" al final de cada respuesta de Cathovia, junto a
+ *   "Escuchar". También en las respuestas del historial.
+ *   - _renderCopyButton(): pinta el botón dentro de la misma .tts-row.
+ *   - _textForCopy(): copia lo que se ve: el texto sin los marcadores
+ *     [[CARD:id]] y con los mismos párrafos que _formatEditorialWithCards().
+ *     Las direcciones se copian completas. Las cards no se copian.
+ *   - _onCopyButtonClick(): navigator.clipboard.writeText y, si no está
+ *     disponible o lo rechaza, _copyFallback() con textarea +
+ *     execCommand('copy'). El botón pasa a "Copiado" o "No se pudo
+ *     copiar" durante 2 s.
+ *   - _appendAssistant(): engancha el clic del botón.
+ *   - CSS: .copy-btn con el mismo estilo que .tts-btn (escritorio y móvil).
  *
  * CAMBIOS v1.6.10 → v1.6.11 — ENLACES EN LAS RESPUESTAS:
  *   Las direcciones web de las respuestas de Cathovia se muestran como
@@ -325,7 +339,7 @@
     return;
   }
 
-  const VERSION = '1.6.11';
+  const VERSION = '1.6.12';
   const TAG = `[CATHOVIA v${VERSION}]`;
 
   const LS_SIDEBAR = 'cathovia-sidebar-open';
@@ -933,6 +947,11 @@
       if (ttsBtn) {
         ttsBtn.addEventListener('click', () => this._onTtsButtonClick(messageId, text, ttsBtn));
       }
+      // Attach handler to copy button (v1.6.12)
+      const copyBtn = el.querySelector('.copy-btn');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', () => this._onCopyButtonClick(text, copyBtn));
+      }
       if (scroll) this._scrollBottom();
       // Auto-play si toggle global activo (solo para respuestas nuevas, no historial)
       if (scroll && this._ttsAutoPlay) {
@@ -943,7 +962,13 @@
     _renderTtsButton(messageId) {
       return `<div class="tts-row"><button class="tts-btn" data-mid="${messageId}" data-state="idle" title="Escuchar" aria-label="Escuchar">
         <span class="tts-icon">🔊</span><span class="tts-label">Escuchar</span>
-      </button></div>`;
+      </button>${this._renderCopyButton(messageId)}</div>`;
+    }
+
+    _renderCopyButton(messageId) {
+      return `<button class="copy-btn" type="button" data-mid="${messageId}" data-state="idle" title="Copiar" aria-label="Copiar">
+        <span class="copy-icon">📋</span><span class="copy-label">Copiar</span>
+      </button>`;
     }
 
     _appendError(text) {
@@ -1461,6 +1486,76 @@
       });
       t = t.replace(/\n{3,}/g, '\n\n').trim();
       return t;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // COPIAR (v1.6.12)
+    // ═════════════════════════════════════════════════════════════════════
+
+    async _onCopyButtonClick(text, btn) {
+      const clean = this._textForCopy(text);
+      if (!clean) return;
+      let ok = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
+          await navigator.clipboard.writeText(clean);
+          ok = true;
+        }
+      } catch (err) {
+        console.warn(`${TAG} clipboard.writeText rechazado:`, err && err.message);
+      }
+      if (!ok) ok = this._copyFallback(clean);
+      console.log(`${TAG} Copiar ${ok ? 'OK' : 'FALLO'} len=${clean.length}`);
+      this._setCopyBtnState(btn, ok ? 'done' : 'error');
+      clearTimeout(btn._copyTimer);
+      btn._copyTimer = setTimeout(() => this._setCopyBtnState(btn, 'idle'), 2000);
+    }
+
+    // Lo que se ve en la respuesta: sin marcadores [[CARD:id]] y con los mismos
+    // párrafos que pinta _formatEditorialWithCards(). Las direcciones se copian
+    // completas (no se recortan como en _sanitizeForTts).
+    _textForCopy(text) {
+      return String(text || '')
+        .replace(/\[\[CARD:[a-zA-Z0-9_\-]+\]\]/g, '')
+        .split(/\n{2,}/)
+        .map(p => p.trim())
+        .filter(Boolean)
+        .join('\n\n');
+    }
+
+    // Navegadores sin navigator.clipboard (o que lo rechazan): textarea fuera
+    // del shadow DOM + execCommand('copy').
+    _copyFallback(text) {
+      let ok = false;
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.opacity = '0';
+      ta.style.pointerEvents = 'none';
+      ta.style.fontSize = '16px'; // evita el zoom de iOS
+      document.body.appendChild(ta);
+      try {
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        ok = document.execCommand('copy');
+      } catch (err) {
+        console.warn(`${TAG} execCommand('copy') falló:`, err && err.message);
+      }
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    _setCopyBtnState(btn, state) {
+      if (!btn) return;
+      btn.dataset.state = state;
+      const icon = btn.querySelector('.copy-icon');
+      const label = btn.querySelector('.copy-label');
+      if (state === 'idle')  { if (icon) icon.textContent = '📋'; if (label) label.textContent = 'Copiar'; }
+      if (state === 'done')  { if (icon) icon.textContent = '✓';  if (label) label.textContent = 'Copiado'; }
+      if (state === 'error') { if (icon) icon.textContent = '!';  if (label) label.textContent = 'No se pudo copiar'; }
     }
 
     _toggleTtsAutoPlay() {
@@ -2441,6 +2536,38 @@
   .tts-icon { font-size: 13px; }
   .tts-label { font-weight: 500; letter-spacing: .1px; }
 
+  /* ═══ BOTÓN COPIAR (v1.6.12) ═══ */
+  .copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--hairline);
+    padding: 5px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--font-body);
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .copy-btn:hover {
+    background: var(--surface);
+    color: var(--ink);
+    border-color: var(--ink-soft);
+  }
+  .copy-btn[data-state="done"] {
+    color: var(--ink);
+    border-color: var(--ink-soft);
+  }
+  .copy-btn[data-state="error"] {
+    color: #7a1a1a;
+    border-color: #f5c8c8;
+  }
+  .copy-icon { font-size: 13px; }
+  .copy-label { font-weight: 500; letter-spacing: .1px; }
+
   /* PANEL DERECHA */
   .panel {
     grid-area: panel;
@@ -2615,6 +2742,7 @@
     .input-ta::placeholder { font-size: 15px; }
 
     .tts-btn { font-size: 11.5px; padding: 4px 10px; }
+    .copy-btn { font-size: 11.5px; padding: 4px 10px; }
 
     .turn-user .bubble { max-width: 85%; font-size: 15px; padding: 11px 14px; }
     .turn-ai .editorial { font-size: 17px; line-height: 1.65; }
