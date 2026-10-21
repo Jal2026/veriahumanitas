@@ -2,8 +2,22 @@
  * VERIA HUMANITAS — CATHOVIA Console (Wix Custom Element)
  * Archivo:  cathoviaConsole.js
  * Tag name: cathovia-console
- * VERSION:  1.6.10
- * FECHA:    1 Octubre 2026
+ * VERSION:  1.6.11
+ * FECHA:    21 Octubre 2026
+ *
+ * CAMBIOS v1.6.10 → v1.6.11 — ENLACES EN LAS RESPUESTAS:
+ *   Las direcciones web de las respuestas de Cathovia se muestran como
+ *   enlace (pestaña nueva), solo si su dominio está en LINK_DOMAINS.
+ *   Cualquier otra dirección sigue saliendo como texto normal.
+ *   - _linkify(): escapa cada trozo del texto por separado y crea el <a>
+ *     solo para dominios permitidos. Acepta la dirección con o sin
+ *     https:// y con o sin www. Sin esquema, el enlace usa https://.
+ *     No convierte correos (contacto@dominio).
+ *   - _formatEditorialWithCards(): usa _linkify() en lugar de _escape()
+ *     para el texto de cada párrafo. Cards y marcadores sin cambios.
+ *   - _sanitizeForTts(): la voz no lee https://, www. ni la ruta de una
+ *     dirección; solo el dominio.
+ *   - CSS: estilo .ed-link dentro de .editorial.
  *
  * CAMBIOS v1.6.9 → v1.6.10 — MARCA EN CABECERA:
  *   Cabecera: marca anterior → "VERIA HUMANITAS" en la línea 2.
@@ -311,12 +325,22 @@
     return;
   }
 
-  const VERSION = '1.6.10';
+  const VERSION = '1.6.11';
   const TAG = `[CATHOVIA v${VERSION}]`;
 
   const LS_SIDEBAR = 'cathovia-sidebar-open';
   const LS_PANEL   = 'cathovia-panel-open';
   const LS_TTS_AUTO = 'cathovia-tts-auto';
+
+  // Enlaces en las respuestas (v1.6.11)
+  // Solo se convierten en enlace las direcciones de estos dominios y de sus
+  // subdominios (www., etc.). Cualquier otra dirección se muestra como texto.
+  const LINK_DOMAINS = [
+    'conferenciaepiscopal.es',
+    'dominicos.org',
+    'ibreviary.com',
+    'veriahumanitas.com'
+  ];
 
   // Polling repetido tras timeout del backend (v1.6.2)
   // Wix Velo corta la conexión cliente↔backend a los 14s. Pero el código
@@ -1028,7 +1052,7 @@
         }).trim();
 
         if (textPart) {
-          const safe = this._escape(textPart).replace(/\n/g, '<br>');
+          const safe = this._linkify(textPart).replace(/\n/g, '<br>');
           outer.push(`<p>${safe}</p>`);
         }
         for (const item of cardsInPara) {
@@ -1428,6 +1452,13 @@
       t = t.replace(/^#{1,6}\s+/gm, '');
       t = t.replace(/^-{3,}$/gm, '');
       t = t.replace(/\*(.+?)\*/g, '$1');
+      // Direcciones web (v1.6.11): la voz dice solo el dominio
+      t = t.replace(/\bhttps?:\/\//gi, '');
+      t = t.replace(/\bwww\./gi, '');
+      t = t.replace(/((?:[a-z0-9-]+\.)+[a-z]{2,})(\/[^\s<>"'()\[\]{}«»“”]*)/gi, (m, host, path) => {
+        const trail = path.match(/[.,;:!?]+$/);
+        return host + (trail ? trail[0] : '');
+      });
       t = t.replace(/\n{3,}/g, '\n\n').trim();
       return t;
     }
@@ -1619,6 +1650,35 @@
       return String(s == null ? '' : s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
         .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+    // v1.6.11 — Convierte en enlace las direcciones de LINK_DOMAINS.
+    // Trabaja sobre el texto crudo y escapa cada trozo por separado, así que
+    // nada de lo que escribe el modelo llega al HTML sin escapar.
+    _linkify(s) {
+      const text = String(s == null ? '' : s);
+      const URL_RE = /(https?:\/\/)?(www\.)?((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,})(\/[^\s<>"'()\[\]{}«»“”]*)?/gi;
+      let out = '';
+      let last = 0;
+      let m;
+      while ((m = URL_RE.exec(text)) !== null) {
+        const start = m.index;
+        const prev = start > 0 ? text.charAt(start - 1) : '';
+        // Correos (contacto@dominio) o trozos de una palabra: no son enlaces
+        if (prev && /[@\w.\-\/]/.test(prev)) continue;
+        const host = (m[3] || '').toLowerCase();
+        const allowed = LINK_DOMAINS.some(d => host === d || host.endsWith('.' + d));
+        if (!allowed) continue;
+        // La puntuación final no forma parte de la dirección
+        let match = m[0];
+        const trail = match.match(/[.,;:!?]+$/);
+        if (trail) match = match.slice(0, -trail[0].length);
+        const href = m[1] ? match : 'https://' + match;
+        out += this._escape(text.slice(last, start));
+        out += `<a class="ed-link" href="${this._escape(href)}" target="_blank" rel="noopener noreferrer">${this._escape(match)}</a>`;
+        last = start + match.length;
+      }
+      out += this._escape(text.slice(last));
+      return out;
     }
     _readLS(key, fallback) {
       try { const v = localStorage.getItem(key); if (v === null) return fallback; return v === '1'; }
@@ -2105,6 +2165,12 @@
   .turn-ai .editorial p:first-child::first-letter {
     font-size: 1.1em;
     font-weight: 500;
+  }
+  .turn-ai .editorial a.ed-link {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    overflow-wrap: anywhere;
   }
 
   /* ═══ INLINE CARDS ═══ */
