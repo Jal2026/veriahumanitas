@@ -2,8 +2,20 @@
  * VERIA HUMANITAS — CATHOVIA Console (Wix Custom Element)
  * Archivo:  cathoviaConsole.js
  * Tag name: cathovia-console
- * VERSION:  1.6.12
+ * VERSION:  1.6.13
  * FECHA:    21 Octubre 2026
+ *
+ * CAMBIOS v1.6.12 → v1.6.13 — HISTORIAL TAPADO POR LA TOPBAR EN MÓVIL:
+ *   BUG: en móvil, la cabecera del historial (HISTORIAL, + Nuevo, ✕) quedaba
+ *   oculta bajo la topbar. .sidebar y .panel eran position:fixed con
+ *   top:52px, medido desde la ventana del navegador y no desde la consola.
+ *   Si la página de Wix tiene algo encima de la consola (la franja
+ *   "< INICIO", ~33px), la topbar baja y el panel no.
+ *   FIX (solo CSS, bloque @media max-width:900px): position:absolute en la
+ *   fila 2 del grid de .layout (grid-area: 2 / 1 / 3 / 2; top:0; bottom:0).
+ *   El panel empieza justo bajo la topbar mida lo que mida y con lo que
+ *   haya encima. .layout ya era position:relative y overflow:hidden.
+ *   JS: solo VERSION. Sin cambios de lógica.
  *
  * CAMBIOS v1.6.11 → v1.6.12 — COPIAR LAS RESPUESTAS:
  *   Botón 📋 "Copiar" al final de cada respuesta de Cathovia, junto a
@@ -339,7 +351,7 @@
     return;
   }
 
-  const VERSION = '1.6.12';
+  const VERSION = '1.6.13';
   const TAG = `[CATHOVIA v${VERSION}]`;
 
   const LS_SIDEBAR = 'cathovia-sidebar-open';
@@ -2693,9 +2705,14 @@
     .tb-sub { font-size: 9.5px; letter-spacing: 1.5px; margin-top: 1px; }
     .tb-beta > span { font-size: 9px; letter-spacing: 1.4px; padding: 3px 8px 2px; }
 
+    /* v1.6.13: anclados a la fila 2 del grid (justo bajo la topbar), no a la
+       ventana. Con position:fixed + top:52px, cualquier franja de Wix encima
+       de la consola (p. ej. "< INICIO") metía la cabecera del historial
+       debajo de la topbar. */
     .sidebar, .panel {
-      position: fixed;
-      top: 52px;
+      position: absolute;
+      grid-area: 2 / 1 / 3 / 2;
+      top: 0;
       bottom: 0;
       z-index: 10;
       width: 88%;
